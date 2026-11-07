@@ -7,6 +7,7 @@
 A family calendar — a “who is where, when” board — for [Home Assistant](https://www.home-assistant.io/). People are columns across the top (with the avatar from their `person.*` entity), time runs down the left. The card shows at a glance which activities happen at the same time in different places — for up to 10 people.
 
 - **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button (in every view) creates an event and asks “For whom?” – including “Shared” for writable shared calendars; tapping free space in a day adds the event right there.
+- **Wall calendar extras (new in v0.29)** – **countdowns** ("⏳ Holiday" → "12 sleeps to go"), a **time-to-leave hint** with Waze driving times, **notices with a confirm button** (e.g. "Put out the bin · Done") and **who is where** on the person chips.
 - **Clock header for wall displays** – `clock_header`: big clock, weekday/date and current weather with high/low instead of the title; optionally a round **back button** (`back_path`) and an automatic return after inactivity (`auto_back`).
 - **Day view** – people as columns, a shared time axis, now line; **overlapping events** are placed side by side.
 - **Week view** – weekdays as rows, people as columns, compact event chips.
@@ -48,7 +49,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 - **Compact mode** – one switch (`compact`) for smaller fonts and tighter spacing instead of adjusting three sliders.
 - **People hidden on start** – `hidden: true` per person; the column starts collapsed and a click on the header brings it back.
 
-> Status: **v0.28 – wall calendar: planner view, clock header, back button; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
+> Status: **v0.29 – wall calendar: planner view, clock header, countdowns, time to leave, notices, presence; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
 
 ## Installation (HACS)
 
@@ -117,6 +118,11 @@ persons:
 | `clock_header` | boolean | `false` | Wall display: big clock, date and current weather instead of the title |
 | `back_path` | string | – | Shows a round back button that navigates to this path, e.g. `/dashboard-tablet/home` |
 | `auto_back` | number | `0` | Kiosk: go to `back_path` after X minutes without a touch anywhere on the page (0 = off) |
+| `home_zone` | string | `zone.home` | Zone that counts as home (presence, start for travel times) |
+| `show_presence` | boolean | `true` | Person chips show home / zone / away with a colored ring |
+| `countdowns` | bool/map | – | Events with ⏳ in the title become countdown chips; map: `marker`, `days`, `max` |
+| `travel` | map | – | "Time to leave" via Waze: `origin`, `region`, `buffer`, `lead`, `places`, `geocode` |
+| `notices` | list | – | Entity-driven notices with an optional confirm button (see below) |
 | `title` | string | – | Custom card title (default: localized “Family board”) |
 | `view` | string | `day` | Start view: `day`, `planner`, `timeline`, `week`, `month` or `agenda` |
 | `views` | list | all | Which views appear in the switcher – in this order, e.g. `[planner, day, month]` |
@@ -166,6 +172,9 @@ The card picks up the theme's colors and fonts automatically. For fine-tuning th
 | `--fb-switch-on` / `--fb-switch-on-text` | `--primary-color` | Active button in the view switcher |
 | `--fb-planner-min` / `--fb-planner-gap` | `136px` / `10px` | Planner: minimum width and gap of the day columns |
 | `--fb-planner-size` | `14px` | Planner: event title font size |
+| `--fb-home-color` / `--fb-zone-color` | `#5bd68a` / `#8fd3ff` | Presence ring: home / in a zone |
+| `--fb-leave-soon` / `--fb-leave-now` | `#ffc46b` / `#ff7a85` | Time to leave: soon / now |
+| `--fb-notice-color` | `#7ee2b8` | Default notice color |
 | `--fb-planner-height` | `62vh` | Planner: height without `full_height` |
 | `--fb-now-color` | `--error-color` | Now line & progress |
 | `--fb-radius` | `7px` | Corners of the event blocks |
@@ -220,6 +229,39 @@ Fast loop against a running HA instance: copy `dist/ha-family-board-card.js` to 
 
 The error-prone event logic (splitting across midnight, all-day exclusivity, time zones, overlap layout) lives isolated in [`src/events.ts`](src/events.ts) and is covered by [`src/events.test.ts`](src/events.test.ts).
 
+## Wall calendar extras (v0.29)
+
+```yaml
+home_zone: zone.home          # which zone counts as home (also the start for travel times)
+show_presence: true           # person chips: green ring = home, blue = in a zone, grey = away
+countdowns:                   # or simply: countdowns: true
+  marker: "⏳"                # events with ⏳ in the title are counted down
+  days: 365
+  max: 3
+travel:                       # "Leave in 10 min" – needs the Waze integration (waze_travel_time)
+  origin: zone.home
+  region: eu
+  buffer: 5                   # minutes of slack for parking
+  lead: 120                   # only events starting within the next 120 minutes
+  places:                     # optional: location text -> zone or "lat,lon"
+    Sports club: zone.sports_club
+notices:                      # notices with a confirm button, e.g. the bin
+  - entity: sensor.bin_notice
+    title: "Put out the {state}"
+    icon: mdi:trash-can-outline
+    color: "#7ee2b8"
+    idle_states: [none, unknown, unavailable]
+    button: Done
+    action:
+      action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.bin_out
+```
+
+- **Countdowns** show in the clock header (otherwise above the board): "Holiday · 12 sleeps to go", 🎉 from tomorrow on. A tap jumps to that day.
+- **Time to leave:** for today's events with a location the card asks Waze for the driving time from `origin`. The tile shows "leave 14:33", 15 minutes before a banner "Leave in 12 min" appears, then a red "Leave now!". Addresses are turned into coordinates via OpenStreetMap (Nominatim) and cached in the browser; set `geocode: false` and use `places` to avoid that. Online meetings (Zoom, Teams, links) are skipped.
+- **Notices** are visible while the entity is not in `idle_states` (default off/unknown/unavailable/none …); `{state}` and `{name}` are filled into the title. The button calls `action` and hides the notice right away.
+
 ## Creating / editing / deleting events
 
 In the day view, clicking an empty spot in a person's column opens the create dialog (the time is taken from the click position); clicking an event opens it for editing/deleting. Whether that is possible depends on the calendar: the card reads `supported_features` of the respective `calendar.*` entity and hides write actions when the calendar does not support them. Internally the WebSocket commands `calendar/event/create|update|delete` are used (the same ones the native HA calendar panel uses).
@@ -236,6 +278,7 @@ In the day view, clicking an empty spot in a person's column opens the create di
 - [x] Available in the official HACS store
 - [x] Localized visual editor (EN/DE)
 - [x] Planner view and clock header for wall calendars (Skylight style)
+- [x] Countdowns, time to leave, notices with a confirm button, presence
 - [ ] Location / conflict detection (e.g. “nobody home”, pick-up gaps)
 
 ## License

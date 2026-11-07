@@ -72,6 +72,16 @@ const EN: Dict = {
   for_whom: "For whom?",
   filter_persons: "Show or hide people",
   until: "until",
+  cd_today: "today!",
+  cd_tomorrow: "tomorrow!",
+  cd_days: "{n} sleeps to go",
+  leave_now: "Leave now!",
+  leave_in: "Leave in {n} min",
+  leave_at: "leave at {t}",
+  minutes_short: "min",
+  tile_leave_now: "leave now!",
+  tile_leave_in: "leave in {n}′",
+  tile_leave_at: "leave {t}",
 };
 
 const DE: Dict = {
@@ -141,6 +151,16 @@ const DE: Dict = {
   for_whom: "Für wen?",
   filter_persons: "Personen ein- oder ausblenden",
   until: "bis",
+  cd_today: "heute!",
+  cd_tomorrow: "morgen!",
+  cd_days: "noch {n}× schlafen",
+  leave_now: "Jetzt losfahren!",
+  leave_in: "Losfahren in {n} Min",
+  leave_at: "los um {t}",
+  minutes_short: "Min",
+  tile_leave_now: "jetzt los!",
+  tile_leave_in: "los in {n}′",
+  tile_leave_at: "los {t}",
 };
 
 const TABLE: Record<string, Dict> = { en: EN, de: DE };

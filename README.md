@@ -8,6 +8,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 
 - **Planer (neu in v0.27)** – die Wandkalender-Ansicht im Skylight-Stil: ein Tag pro Spalte ab heute, farbige Termin-Kacheln je Person, Ganztägiges als Balken oben, Wetter pro Tag, laufender Termin mit Fortschritt. Derselbe Termin bei mehreren Personen wird **eine** Kachel mit allen Avataren. Wischen oder ‹ › blättert, ein Tipp auf den Tageskopf öffnet die Tagesansicht, der runde **＋**-Knopf (in allen Ansichten) legt einen Termin an und fragt „Für wen?“ – auch „Gemeinsam“ für beschreibbare gemeinsame Kalender; ein Tipp auf eine freie Stelle eines Tages legt den Termin direkt dort an.
 - **Uhr-Kopf für Wandanzeigen** – `clock_header`: große Uhr, Wochentag/Datum und aktuelles Wetter mit Höchst-/Tiefstwert statt des Titels; optional ein runder **Zurück-Knopf** (`back_path`) und automatische Rückkehr nach Inaktivität (`auto_back`).
+- **Wandkalender-Extras (neu in v0.29)** – **Countdowns** („⏳ Urlaub" → „noch 12× schlafen"), **Losfahren-Hinweis** mit Fahrzeit über Waze, **Hinweise mit Bestätigen-Knopf** (z. B. „Gelber Sack rausstellen · Erledigt") und **Wer ist wo** an den Personen-Chips.
 - **Tagesansicht** – Personen als Spalten, geteilte Zeitachse, Jetzt-Linie; **überlappende Termine** werden nebeneinander dargestellt.
 - **Wochenansicht** – Wochentage als Zeilen, Personen als Spalten, kompakte Termin-Chips.
 - **Monatsansicht** – klassisches Monats-Grid mit farbigen Terminen pro Person; Klick auf einen Tag springt in die Tagesansicht.
@@ -48,7 +49,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Kompakt-Modus** – ein Schalter (`compact`) für kleinere Schriften und engere Abstände, statt drei Regler einzeln zu justieren.
 - **Personen beim Start ausgeblendet** – `hidden: true` pro Person; die Spalte startet eingeklappt und ein Klick auf den Kopf holt sie zurück.
 
-> Status: **v0.28 – Wandkalender: Planer-Ansicht, Uhr-Kopf, Zurück-Knopf; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
+> Status: **v0.29 – Wandkalender: Planer-Ansicht, Uhr-Kopf, Countdowns, Losfahren-Hinweis, Hinweise, Anwesenheit; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
 
 ## Installation (HACS)
 
@@ -117,6 +118,11 @@ persons:
 | `clock_header`  | boolean | `false` | Wandanzeige: große Uhr, Datum und aktuelles Wetter statt des Titels |
 | `back_path`     | string  | –       | Zeigt einen runden Zurück-Knopf, der zu diesem Pfad navigiert, z. B. `/dashboard-tablet/home` |
 | `auto_back`     | number  | `0`     | Kiosk: nach X Minuten ohne Berührung (irgendwo auf der Seite) zu `back_path` zurück (0 = aus) |
+| `home_zone`     | string  | `zone.home` | Zone, die als „zuhause" gilt (Anwesenheit, Start für Fahrzeiten) |
+| `show_presence` | boolean | `true`  | Personen-Chips zeigen zuhause / Zone / unterwegs mit farbigem Ring |
+| `countdowns`    | bool/Map | –      | Termine mit ⏳ im Titel als Countdown-Chips; Map: `marker`, `days`, `max` |
+| `travel`        | Map     | –       | „Losfahren"-Hinweis über Waze: `origin`, `region`, `buffer`, `lead`, `places`, `geocode` |
+| `notices`       | Liste   | –       | Hinweise aus Entitäten mit optionalem Bestätigen-Knopf (siehe unten) |
 | `title`          | string  | –       | Eigener Kartentitel (Default: lokalisiert „Familienplan") |
 | `view`          | string  | `day`   | Startansicht: `day`, `planner`, `timeline`, `week`, `month` oder `agenda` |
 | `views`         | Liste   | alle    | Welche Ansichten im Umschalter erscheinen – in dieser Reihenfolge, z. B. `[planner, day, month]` |
@@ -166,6 +172,9 @@ Die Karte übernimmt automatisch Farben & Schrift des Themes. Für Feintuning gi
 | `--fb-switch-on` / `--fb-switch-on-text` | `--primary-color` | Aktiver Knopf im Ansichts-Umschalter |
 | `--fb-planner-min` / `--fb-planner-gap` | `136px` / `10px` | Planer: Mindestbreite und Abstand der Tages-Spalten |
 | `--fb-planner-size` | `14px` | Planer: Schriftgröße der Termin-Titel |
+| `--fb-home-color` / `--fb-zone-color` | `#5bd68a` / `#8fd3ff` | Anwesenheits-Ring: zuhause / in einer Zone |
+| `--fb-leave-soon` / `--fb-leave-now` | `#ffc46b` / `#ff7a85` | Losfahren: bald / jetzt |
+| `--fb-notice-color` | `#7ee2b8` | Standardfarbe der Hinweise |
 | `--fb-planner-height` | `62vh` | Planer: Höhe ohne `full_height` |
 | `--fb-now-color` | `--error-color` | Jetzt-Linie & Fortschritt |
 | `--fb-radius` | `7px` | Ecken der Termin-Blöcke |
@@ -220,6 +229,39 @@ Schneller Loop gegen die laufende HA-Instanz: `dist/ha-family-board-card.js` nac
 
 Die fehleranfällige Event-Logik (Splitting über Mitternacht, Ganztags-Exklusivität, Zeitzonen, Überlappungs-Layout) liegt isoliert in [`src/events.ts`](src/events.ts) und ist über [`src/events.test.ts`](src/events.test.ts) abgedeckt.
 
+## Wandkalender-Extras (v0.29)
+
+```yaml
+home_zone: zone.home          # welche Zone „zuhause" ist (auch Start für Fahrzeiten)
+show_presence: true           # Personen-Chips: Ring grün = zuhause, blau = in einer Zone, grau = unterwegs
+countdowns:                   # oder einfach: countdowns: true
+  marker: "⏳"                # Termine mit ⏳ im Titel werden heruntergezählt
+  days: 365
+  max: 3
+travel:                       # „Losfahren in 10 Min" – braucht die Waze-Integration (waze_travel_time)
+  origin: zone.home
+  region: eu
+  buffer: 5                   # Minuten Puffer fürs Parken
+  lead: 120                   # nur Termine, die in den nächsten 120 Minuten beginnen
+  places:                     # optional: Ortstext -> Zone oder "lat,lon"
+    Sportverein: zone.sportverein
+notices:                      # Hinweise mit Bestätigungs-Knopf, z. B. Mülltonne
+  - entity: sensor.muell_hinweis
+    title: "{state} rausstellen"
+    icon: mdi:trash-can-outline
+    color: "#7ee2b8"
+    idle_states: [keine, unknown, unavailable]
+    button: Erledigt
+    action:
+      action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.muell_rausgestellt
+```
+
+- **Countdowns** erscheinen im Uhr-Kopf (sonst über dem Board): „Urlaub · noch 12× schlafen", ab morgen mit 🎉. Ein Tipp springt zum Tag.
+- **Losfahren:** Für Termine von heute mit Ort rechnet die Karte über Waze die Fahrzeit ab `origin` aus. Die Kachel zeigt „los 14:33", 15 Minuten vorher erscheint oben „Losfahren in 12 Min", danach rot „Jetzt losfahren!". Adressen werden über OpenStreetMap (Nominatim) in Koordinaten umgewandelt und im Browser zwischengespeichert. Wer das nicht möchte, setzt `geocode: false` und pflegt `places`. Online-Termine (Zoom, Teams, Links) werden übersprungen.
+- **Hinweise** sind sichtbar, solange die Entität nicht in `idle_states` steht (Standard: off/unknown/unavailable/none …). `{state}` und `{name}` werden im Titel ersetzt. Der Knopf ruft `action` auf und blendet den Hinweis sofort aus.
+
 ## Termine anlegen / bearbeiten / löschen
 
 In der Tagesansicht eine freie Stelle in der Personenspalte anklicken öffnet den Dialog zum Anlegen (die Uhrzeit wird aus der Klick-Position übernommen); ein Klick auf einen Termin öffnet ihn zum Bearbeiten/Löschen. Ob das möglich ist, hängt vom Kalender ab: Die Karte liest `supported_features` der jeweiligen `calendar.*`-Entität und blendet Schreibaktionen aus, wenn der Kalender sie nicht unterstützt. Intern werden die WebSocket-Kommandos `calendar/event/create|update|delete` genutzt (dieselben wie die native HA-Kalenderoberfläche).
@@ -236,6 +278,7 @@ In der Tagesansicht eine freie Stelle in der Personenspalte anklicken öffnet de
 - [x] Aufnahme in den offiziellen HACS-Store
 - [x] Lokalisierter visueller Editor (DE/EN)
 - [x] Planer-Ansicht und Uhr-Kopf für Wandkalender (Skylight-Stil)
+- [x] Countdowns, Losfahren-Hinweis, Hinweise mit Bestätigen-Knopf, Anwesenheit
 - [ ] Orts-/Konflikterkennung (z. B. „niemand zuhause", Abhol-Lücken)
 
 ## Lizenz

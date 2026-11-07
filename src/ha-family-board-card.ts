@@ -30,6 +30,20 @@ import {
   formatWeekRange,
   formatDayRange,
 } from "./localize";
+import {
+  COUNTDOWN_MARKER,
+  addressCandidates,
+  daysUntil,
+  distanceKm,
+  fillTemplate,
+  isOnlineLocation,
+  leaveInfo,
+  noticeActive,
+  parseLatLon,
+  stripMarker,
+  LatLon,
+  LeaveInfo,
+} from "./extras";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -114,6 +128,48 @@ export interface FamilyBoardConfig extends LovelaceCardConfig {
   clock_header?: boolean; // wall display: big clock, date and current weather as the card header
   back_path?: string; // shows a back button that navigates to this dashboard path
   auto_back?: number; // kiosk: minutes without touch before navigating to back_path. 0=off
+  home_zone?: string; // zone that counts as "home" for presence and travel. default zone.home
+  show_presence?: boolean; // person chips show where everyone is. default true
+  countdowns?: boolean | CountdownConfig; // "⏳ Urlaub" events become countdown chips
+  travel?: TravelConfig; // "time to leave" for today's events with a location (Waze)
+  notices?: NoticeConfig[]; // banners driven by entities, e.g. "Put the bin out" + done button
+}
+
+export interface CountdownConfig {
+  marker?: string; // default ⏳
+  days?: number; // how far ahead to look. default 365
+  max?: number; // chips shown at most. default 3
+}
+
+export interface TravelConfig {
+  origin?: string; // zone / person / "lat,lon". default home_zone
+  region?: "eu" | "us" | "na" | "il" | "au"; // Waze region. default eu
+  buffer?: number; // minutes added for parking etc. default 5
+  lead?: number; // only events starting within this many minutes. default 120
+  vehicle_type?: "car" | "taxi" | "motorcycle";
+  places?: Record<string, string>; // location text -> zone.x or "lat,lon"
+  geocode?: boolean; // look up addresses at OpenStreetMap (Nominatim). default true
+}
+
+export interface NoticeConfig {
+  entity: string; // shown while its state is not off/unknown/unavailable/...
+  title?: string; // "{state} rausstellen"; default: the state
+  icon?: string;
+  color?: string;
+  idle_states?: string[]; // states that hide the notice
+  button?: string; // label of the confirm button
+  action?: { action: string; target?: Record<string, unknown>; data?: Record<string, unknown> };
+}
+
+interface CountdownItem {
+  title: string;
+  start: Date;
+  color: string;
+}
+
+interface TravelEntry {
+  at: number; // ms timestamp of the lookup
+  min?: number; // driving minutes; undefined = not routable / at home
 }
 
 /** A collapsed "+N more" marker for dense overlap clusters in the day view. */
@@ -399,6 +455,12 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   @state() private _forecast: Record<string, { temp: number; low?: number; condition: string }> =
     {};
   private _weatherKey = "";
+  @state() private _countdowns: CountdownItem[] = [];
+  private _countdownKey = "";
+  private _travel = new Map<string, TravelEntry>();
+  @state() private _travelRev = 0;
+  private _travelBusy = false;
+  @state() private _noticeDone: Record<string, { state: string; at: number }> = {};
   private _scrolledKey = "";
   private _restoreFocus?: HTMLElement;
   private _ro?: ResizeObserver;
@@ -536,6 +598,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     this._tick = window.setTimeout(() => {
       this._kioskReturn();
       this.requestUpdate();
+      this._updateTravel();
       this._scheduleTick();
     }, wait);
   }
@@ -626,6 +689,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     ) {
       this._maybeFetch();
       this._maybeFetchWeather();
+      this._maybeFetchCountdowns();
     }
     if (changed.has("_todoItemsByOwner") && this._todoBadgeDialog) {
       const items = this._todoItemsForPerson(this._todoBadgeDialog.personIdx);
@@ -1079,6 +1143,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
       });
     }
     this._raw = cleaned;
+    this._updateTravel();
     // Week views index events by weekday; month and planner build their own grid from _raw.
     const { monday } = this._weekBounds();
     this._events =
@@ -2029,7 +2094,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
               <div class="titlewrap">${this._backButton()}<span class="title">${title}</span></div>
               ${this._viewSwitch()}
             </div>`}
-        ${this._config.show_focus ? this._renderFocus() : nothing}
+        ${this._renderExtras()} ${this._config.show_focus ? this._renderFocus() : nothing}
         ${this._view === "day"
           ? this._renderDay()
           : this._view === "planner"
@@ -2101,7 +2166,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
           <span class="ctime">${formatTime(this.hass, now)}</span>
           <span class="cdate"><b>${weekday}</b><span>${date}</span></span>
         </div>
-        ${this._currentWeather()}
+        ${this._currentWeather()} ${this._renderCountdowns()}
         <span class="cspacer"></span>
         ${this._viewSwitch()}
       </div>
@@ -2136,14 +2201,350 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     return html`<div class="pfilter" role="group" aria-label=${this._t("filter_persons")}>
       ${this._persons.map((p, i) => {
         const off = this._isOff(i);
+        const where = this._presence(p);
         return html`<button
-          class="pchip ${off ? "off" : ""}"
+          class="pchip ${off ? "off" : ""} ${where ? `at-${where.kind}` : ""}"
           aria-pressed=${!off}
           style="--c:${personColor(p, i)}"
           @click=${() => this._togglePerson(i)}
         >
-          ${this._avatar(p, i)}<span>${this._personName(p, i)}</span>
+          ${this._avatar(p, i)}${this._presenceLabel(p, i)}
         </button>`;
+      })}
+    </div>`;
+  }
+
+  /* ---- presence ("who is where") ------------------------------- */
+  /** Friendly name of the home zone; HA reports it as the person state when it is not zone.home. */
+  private get _homeZone(): string {
+    return this._config.home_zone || "zone.home";
+  }
+
+  private _presence(
+    p: PersonConfig,
+  ): { kind: "home" | "away" | "zone"; label: string } | undefined {
+    if (this._config.show_presence === false || !p.person) return undefined;
+    const st = this.hass.states[p.person]?.state;
+    if (!st || st === "unknown" || st === "unavailable") return undefined;
+    const homeName = this.hass.states[this._homeZone]?.attributes?.friendly_name;
+    if (st === "home" || (homeName && st === homeName)) {
+      return { kind: "home", label: this._t("status_home") };
+    }
+    if (st === "not_home") return { kind: "away", label: this._t("status_away") };
+    return { kind: "zone", label: st };
+  }
+
+  private _presenceLabel(p: PersonConfig, i: number) {
+    const where = this._presence(p);
+    const name = this._personName(p, i);
+    if (!where) return html`<span>${name}</span>`;
+    return html`<span class="pcname"><span>${name}</span><small>${where.label}</small></span>`;
+  }
+
+  /* ---- countdowns ("⏳ Urlaub · noch 12× schlafen") -------------- */
+  private get _countdownCfg(): Required<CountdownConfig> | undefined {
+    const c = this._config.countdowns;
+    if (!c) return undefined;
+    const o = typeof c === "object" ? c : {};
+    return {
+      marker: o.marker || COUNTDOWN_MARKER,
+      days: Math.min(730, Math.max(1, Number(o.days ?? 365) || 365)),
+      max: Math.min(6, Math.max(1, Number(o.max ?? 3) || 3)),
+    };
+  }
+
+  /** All configured calendars once, each with the color it is shown in. */
+  private _allCalendars(): { cal: string; color: string }[] {
+    const out = new Map<string, string>();
+    this._config.persons.forEach((p, idx) => {
+      for (const cal of this._calsOf(p)) if (!out.has(cal)) out.set(cal, personColor(p, idx));
+    });
+    for (const cal of this._sharedCalendarIds()) {
+      out.set(cal, this._calMeta(cal).color ?? out.get(cal) ?? hashColor(cal));
+    }
+    return Array.from(out, ([cal, color]) => ({ cal, color })).filter(
+      ({ cal }) => this.hass.states[cal],
+    );
+  }
+
+  /** Look ahead for marked events; refreshed every 30 minutes and on day change. */
+  private async _maybeFetchCountdowns(): Promise<void> {
+    const cfg = this._countdownCfg;
+    if (!cfg) {
+      if (this._countdowns.length) this._countdowns = [];
+      this._countdownKey = "";
+      return;
+    }
+    const cals = this._allCalendars();
+    const key = `${cfg.marker}|${cfg.days}|${cals.map((c) => c.cal).join(",")}|${Math.floor(
+      Date.now() / 1800000,
+    )}`;
+    if (key === this._countdownKey) return;
+    this._countdownKey = key;
+    const start = startOfDay(new Date());
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + cfg.days);
+    const found = new Map<string, CountdownItem>();
+    await Promise.all(
+      cals.map(async ({ cal, color }) => {
+        try {
+          const events = await this.hass.callApi<any[]>(
+            "GET",
+            `calendars/${cal}?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
+              end.toISOString(),
+            )}`,
+          );
+          for (const ev of events) {
+            const summary = String(ev?.summary ?? "");
+            if (!summary.includes(cfg.marker)) continue;
+            const raw = parseRawEvent(ev, 0, cal, color, false);
+            if (!raw || raw.start.getTime() < start.getTime()) continue; // already running
+            const title = stripMarker(this._cleanTitle(summary), cfg.marker);
+            const k = `${title.toLowerCase()}|${toLocalDate(raw.start)}`;
+            if (!found.has(k))
+              found.set(k, { title, start: raw.start, color: this._calMeta(cal).color ?? color });
+          }
+        } catch (_e) {
+          /* a broken calendar must not hide the others */
+        }
+      }),
+    );
+    this._countdowns = Array.from(found.values())
+      .sort((a, b) => a.start.getTime() - b.start.getTime())
+      .slice(0, cfg.max);
+  }
+
+  private _countdownText(n: number): string {
+    if (n <= 0) return this._t("cd_today");
+    if (n === 1) return this._t("cd_tomorrow");
+    return this._t("cd_days").replace("{n}", String(n));
+  }
+
+  private _renderCountdowns() {
+    if (!this._countdowns.length) return nothing;
+    const now = new Date();
+    return html`<div class="cdowns">
+      ${this._countdowns.map((c) => {
+        const n = daysUntil(now, c.start);
+        return html`<button
+          class="cdown ${n <= 1 ? "hot" : ""}"
+          style="--c:${c.color}"
+          title=${c.start.toLocaleDateString(this.hass.locale?.language)}
+          @click=${() => this._goToDate(c.start)}
+        >
+          <span class="cdnum">${n <= 1 ? "🎉" : n}</span>
+          <span class="cdtxt"><b>${c.title}</b><small>${this._countdownText(n)}</small></span>
+        </button>`;
+      })}
+    </div>`;
+  }
+
+  /* ---- travel ("time to leave") --------------------------------- */
+  private _coordsOf(ref: string): LatLon | undefined {
+    const ll = parseLatLon(ref);
+    if (ll) return ll;
+    const a = this.hass.states[ref]?.attributes;
+    const lat = Number(a?.latitude);
+    const lon = Number(a?.longitude);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : undefined;
+  }
+
+  /** Coordinates for an event location: own places first, then OpenStreetMap (cached). */
+  private async _locate(loc: string, near: LatLon): Promise<LatLon | undefined> {
+    const places = this._config.travel?.places ?? {};
+    const low = loc.toLowerCase();
+    for (const [name, ref] of Object.entries(places)) {
+      if (name && low.includes(name.toLowerCase())) return this._coordsOf(ref);
+    }
+    const direct = parseLatLon(loc);
+    if (direct) return direct;
+    if (this._config.travel?.geocode === false) return undefined;
+    for (const q of addressCandidates(loc)) {
+      const ck = `fbc-geo:${q.toLowerCase()}`;
+      let hit: LatLon | null | undefined;
+      try {
+        const c = localStorage.getItem(ck);
+        if (c) hit = JSON.parse(c);
+      } catch (_e) {
+        /* storage blocked */
+      }
+      if (hit === undefined) {
+        const box = [near.lon - 0.6, near.lat + 0.6, near.lon + 0.6, near.lat - 0.6].join(",");
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&viewbox=${box}&q=${encodeURIComponent(q)}`,
+            { headers: { "Accept-Language": this.hass.locale?.language || "en" } },
+          );
+          if (!r.ok) return undefined; // rate limited / offline: try again later
+          const list: any[] = await r.json();
+          hit = list[0] ? { lat: Number(list[0].lat), lon: Number(list[0].lon) } : null;
+        } catch (_e) {
+          return undefined;
+        }
+        try {
+          localStorage.setItem(ck, JSON.stringify(hit));
+        } catch (_e) {
+          /* storage full or blocked */
+        }
+        await new Promise((res) => setTimeout(res, 1100)); // Nominatim: max 1 request/second
+      }
+      // a match on the other side of the country is a wrong guess, not a destination
+      if (hit && distanceKm(near, hit) < 300) return hit;
+    }
+    return undefined;
+  }
+
+  /** Look up driving times for today's upcoming events (one lookup per place every 10 min). */
+  private async _updateTravel(): Promise<void> {
+    const cfg = this._config?.travel;
+    if (!cfg || this._travelBusy || !this.hass) return;
+    const origin = this._coordsOf(cfg.origin || this._homeZone);
+    if (!origin) return;
+    const now = Date.now();
+    const lead = Math.max(15, Number(cfg.lead ?? 120) || 120) * 60000;
+    const locs = new Set<string>();
+    for (const r of this._raw) {
+      const loc = r.location?.trim();
+      if (!loc || r.allDay || r.kind === "todo" || isOnlineLocation(loc)) continue;
+      const t = r.start.getTime();
+      if (t > now && t - now <= lead) locs.add(loc);
+    }
+    this._travelBusy = true;
+    try {
+      for (const loc of locs) {
+        const c = this._travel.get(loc);
+        const maxAge = c && c.min === undefined ? 3 * 3600000 : 600000;
+        if (c && now - c.at < maxAge) continue;
+        const dest = await this._locate(loc, origin);
+        let min: number | undefined;
+        if (dest && distanceKm(origin, dest) >= 0.4) {
+          try {
+            const res: any = await this.hass.callWS({
+              type: "call_service",
+              domain: "waze_travel_time",
+              service: "get_travel_times",
+              service_data: {
+                origin: `${origin.lat},${origin.lon}`,
+                destination: `${dest.lat},${dest.lon}`,
+                region: cfg.region || "eu",
+                vehicle_type: cfg.vehicle_type || "car",
+              },
+              return_response: true,
+            });
+            const routes: any[] = res?.response?.routes ?? [];
+            const best = Math.min(...routes.map((x) => Number(x.duration)).filter(Number.isFinite));
+            if (Number.isFinite(best)) min = Math.round(best);
+          } catch (_e) {
+            /* Waze not set up or no route */
+          }
+        }
+        this._travel.set(loc, { at: Date.now(), min });
+        this._travelRev++;
+      }
+    } finally {
+      this._travelBusy = false;
+    }
+  }
+
+  /** Leave time for an event, or undefined when there is nothing to say. */
+  private _leaveFor(r: RawEvent): LeaveInfo | undefined {
+    const cfg = this._config.travel;
+    const loc = r.location?.trim();
+    if (!cfg || !loc || r.allDay || r.kind === "todo") return undefined;
+    const now = new Date();
+    const lead = Math.max(15, Number(cfg.lead ?? 120) || 120) * 60000;
+    if (r.start.getTime() <= now.getTime() || r.start.getTime() - now.getTime() > lead)
+      return undefined;
+    const min = this._travel.get(loc)?.min;
+    if (min === undefined) return undefined;
+    return leaveInfo(now, r.start, min, Number(cfg.buffer ?? 5));
+  }
+
+  private _leaveText(l: LeaveInfo): string {
+    if (l.level === "now") return this._t("leave_now");
+    if (l.level === "soon") return this._t("leave_in").replace("{n}", String(l.minutes));
+    return this._t("leave_at").replace("{t}", formatTime(this.hass, l.leaveAt));
+  }
+
+  /** Short form for narrow planner tiles: "los 14:33" · "los in 7 Min" · "jetzt los!". */
+  private _renderLeave(e: BoardEvent) {
+    if (e.continuesBefore) return nothing;
+    const l = this._leaveFor(e.ref);
+    if (!l) return nothing;
+    const min = this._travel.get(e.ref.location!.trim())?.min;
+    const text =
+      l.level === "now"
+        ? this._t("tile_leave_now")
+        : l.level === "soon"
+          ? this._t("tile_leave_in").replace("{n}", String(l.minutes))
+          : this._t("tile_leave_at").replace("{t}", formatTime(this.hass, l.leaveAt));
+    return html`<div class="plleave ${l.level}" title="${min} ${this._t("minutes_short")}">
+      <ha-icon icon="mdi:car"></ha-icon><span>${text}</span>
+    </div>`;
+  }
+
+  /* ---- notices strip -------------------------------------------- */
+  private _runNotice(n: NoticeConfig): void {
+    const a = n.action;
+    if (!a?.action || !a.action.includes(".")) return;
+    const [domain, service] = a.action.split(".", 2);
+    // hide right away; it comes back only if the entity still shows the same state in 2 minutes
+    const st = this.hass.states[n.entity]?.state ?? "";
+    this._noticeDone = { ...this._noticeDone, [n.entity]: { state: st, at: Date.now() } };
+    this.hass.callService(domain, service, a.data ?? {}, a.target as any);
+  }
+
+  /** Entity notices (bins, dishwasher, ...) plus urgent "leave now" hints for today. */
+  private _renderExtras() {
+    void this._travelRev; // re-render when travel times arrive
+    const notices = (this._config.notices ?? []).filter((n) => {
+      const st = this.hass.states[n.entity]?.state;
+      const done = this._noticeDone[n.entity];
+      if (done && done.state === st && Date.now() - done.at < 120000) return false;
+      return noticeActive(st, n.idle_states);
+    });
+    const now = Date.now();
+    const leaving = this._raw
+      .filter((r) => !this._isOff(r.personIdx) && r.start.getTime() > now)
+      .map((r) => ({ r, l: this._leaveFor(r) }))
+      .filter((x): x is { r: RawEvent; l: LeaveInfo } => !!x.l && x.l.level !== "info")
+      .filter(
+        (x, i, all) =>
+          all.findIndex(
+            (y) => y.r.summary === x.r.summary && y.r.start.getTime() === x.r.start.getTime(),
+          ) === i,
+      )
+      .slice(0, 2);
+    const cds = this._config.clock_header ? nothing : this._renderCountdowns();
+    if (!notices.length && !leaving.length && cds === nothing) return nothing;
+    return html`<div class="extras">
+      ${cds}
+      ${leaving.map(
+        ({ r, l }) =>
+          html`<div class="notice leave ${l.level}">
+            <ha-icon icon="mdi:car"></ha-icon>
+            <span class="ntxt"
+              ><b>${this._leaveText(l)}</b
+              ><small
+                >${stripMarker(r.summary, "")} · ${formatTime(this.hass, r.start)}</small
+              ></span
+            >
+          </div>`,
+      )}
+      ${notices.map((n) => {
+        const st = this.hass.states[n.entity];
+        const name = String(st?.attributes?.friendly_name ?? n.entity);
+        const title = n.title ? fillTemplate(n.title, { state: st!.state, name }) : st!.state;
+        return html`<div class="notice" style=${n.color ? `--c:${n.color}` : ""}>
+          <button class="nbody" @click=${() => this._moreInfo(n.entity)}>
+            <ha-icon icon=${n.icon || "mdi:information-outline"}></ha-icon>
+            <span class="ntxt"><b>${title}</b></span>
+          </button>
+          ${n.button && n.action
+            ? html`<button class="nbtn" @click=${() => this._runNotice(n)}>
+                <ha-icon icon="mdi:check"></ha-icon>${n.button}
+              </button>`
+            : nothing}
+        </div>`;
       })}
     </div>`;
   }
@@ -2429,6 +2830,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
       <div class="pltitle ${todo ? "todo-line" : ""}">
         ${todo ? this._renderTodoCheckbox(e) : nothing}${this._calIconEl(e)}<span>${title}</span>
       </div>
+      ${this._renderLeave(e)}
       ${e.location && !todo
         ? html`<div class="plloc">
             <ha-icon icon="mdi:map-marker-outline"></ha-icon><span>${e.location}</span>
@@ -4326,6 +4728,180 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     }
     .cspacer {
       flex: 1;
+    }
+    /* presence: ring around the avatar + where they are */
+    button.pchip.at-home .avatar {
+      box-shadow: 0 0 0 2px var(--fb-home-color, #5bd68a) !important;
+    }
+    button.pchip.at-zone .avatar {
+      box-shadow: 0 0 0 2px var(--fb-zone-color, #8fd3ff) !important;
+    }
+    button.pchip.at-away .avatar {
+      box-shadow: 0 0 0 2px var(--divider-color) !important;
+      opacity: 0.75;
+    }
+    .pcname {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      line-height: 1.1;
+    }
+    .pcname small {
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--secondary-text-color);
+    }
+    /* countdown chips */
+    .cdowns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button.cdown {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      border: none;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      padding: 5px 14px 5px 5px;
+      border-radius: 18px;
+      background: var(--fb-soft, color-mix(in srgb, var(--primary-text-color) 7%, transparent));
+    }
+    .cdnum {
+      flex: none;
+      min-width: 34px;
+      height: 34px;
+      padding: 0 4px;
+      box-sizing: border-box;
+      border-radius: 17px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+      background: color-mix(in srgb, var(--c) 30%, transparent);
+      box-shadow: inset 0 0 0 1.5px var(--c);
+    }
+    button.cdown.hot .cdnum {
+      background: var(--c);
+    }
+    .cdtxt {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.15;
+      max-width: 170px;
+    }
+    .cdtxt b,
+    .ntxt b {
+      font-size: 13.5px;
+      font-weight: 650;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cdtxt small,
+    .ntxt small {
+      font-size: 11.5px;
+      color: var(--secondary-text-color);
+    }
+    /* notices strip under the header */
+    .extras {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 16px 0;
+    }
+    .notice {
+      --c: var(--fb-notice-color, #7ee2b8);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--c) 18%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent);
+      animation: fb-fade 0.3s ease-out;
+    }
+    .notice > ha-icon,
+    .notice .nbody ha-icon {
+      --mdc-icon-size: 20px;
+      color: var(--c);
+      margin-left: 6px;
+    }
+    .notice .nbody {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: none;
+      background: none;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      padding: 4px 6px 4px 0;
+    }
+    .ntxt {
+      display: flex;
+      flex-direction: column;
+      text-align: left;
+      line-height: 1.15;
+      padding-right: 8px;
+    }
+    .notice .nbtn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: none;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 7px 14px 7px 10px;
+      border-radius: 12px;
+      background: var(--c);
+      color: #1b1726;
+    }
+    .notice .nbtn ha-icon {
+      --mdc-icon-size: 18px;
+    }
+    .notice.leave {
+      --c: var(--fb-leave-soon, #ffc46b);
+    }
+    .notice.leave.now {
+      --c: var(--fb-leave-now, #ff7a85);
+      animation: fb-attn 1.6s ease-in-out infinite;
+    }
+    @keyframes fb-attn {
+      50% {
+        background: color-mix(in srgb, var(--c) 34%, transparent);
+      }
+    }
+    .plleave {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 3px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--secondary-text-color);
+    }
+    .plleave ha-icon {
+      --mdc-icon-size: 14px;
+      flex: none;
+    }
+    .plleave span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .plleave.soon {
+      color: var(--fb-leave-soon, #ffc46b);
+    }
+    .plleave.now {
+      color: var(--fb-leave-now, #ff7a85);
     }
     /* person filter chips */
     .pfilter {
@@ -6361,7 +6937,7 @@ if (!customElements.get("family-board-card")) {
 });
 
 console.info(
-  "%c FAMILY-BOARD-CARD %c v0.28.0 ",
+  "%c FAMILY-BOARD-CARD %c v0.29.0 ",
   "background:#5B8CFF;color:#fff;border-radius:3px 0 0 3px",
   "background:#222;color:#fff;border-radius:0 3px 3px 0",
 );

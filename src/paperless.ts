@@ -105,3 +105,30 @@ export function sameTags(a: number[], b: number[]): boolean {
   const s = new Set(a);
   return b.every((t) => s.has(t));
 }
+
+/* ---------- PDF preview (pdf.js, loaded from the CDN on first use) ---------- */
+
+export const PDFJS_VERSION = "4.10.38";
+
+export function pdfjsUrls(version: string = PDFJS_VERSION): { lib: string; worker: string } {
+  const base = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build`;
+  return { lib: `${base}/pdf.min.mjs`, worker: `${base}/pdf.worker.min.mjs` };
+}
+
+/**
+ * Render scale so a page `pageWidth` points wide fills `targetWidth` CSS pixels
+ * sharply on a `dpr` screen. Capped so huge pages do not exhaust tablet memory.
+ */
+export function renderScale(pageWidth: number, targetWidth: number, dpr: number): number {
+  if (!(pageWidth > 0) || !(targetWidth > 0)) return 1;
+  return Math.min(4, (targetWidth * Math.max(1, dpr || 1)) / pageWidth);
+}
+
+/** Zoom steps for the preview, in percent of the available width. */
+export const ZOOM_STEPS = [100, 150, 200, 300];
+
+export function nextZoom(current: number, dir: 1 | -1): number {
+  const i = ZOOM_STEPS.indexOf(current);
+  const j = Math.min(ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir));
+  return ZOOM_STEPS[j];
+}

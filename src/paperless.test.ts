@@ -8,6 +8,9 @@ import {
   sameTags,
   splitService,
   toggleTag,
+  pdfjsUrls,
+  renderScale,
+  nextZoom,
 } from "./paperless";
 
 describe("normalizeConfig", () => {
@@ -74,5 +77,25 @@ describe("sameTags", () => {
   it("ignores order", () => {
     expect(sameTags([1, 2], [2, 1])).toBe(true);
     expect(sameTags([1], [1, 2])).toBe(false);
+  });
+});
+
+describe("pdf preview helpers", () => {
+  it("builds pinned CDN urls", () => {
+    expect(pdfjsUrls("4.10.38")).toEqual({
+      lib: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+      worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+    });
+  });
+  it("scales pages to the target width", () => {
+    expect(renderScale(595, 595, 2)).toBe(2);
+    expect(renderScale(100, 1000, 2)).toBe(4);
+    expect(renderScale(0, 1000, 2)).toBe(1);
+  });
+  it("steps the zoom within bounds", () => {
+    expect(nextZoom(100, 1)).toBe(150);
+    expect(nextZoom(100, -1)).toBe(100);
+    expect(nextZoom(300, 1)).toBe(300);
+    expect(nextZoom(42, 1)).toBe(150);
   });
 });

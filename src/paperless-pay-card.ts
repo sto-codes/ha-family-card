@@ -22,6 +22,8 @@ import {
   ageDays,
   sameTags,
 } from "./paperless";
+import "./paperless-pdf-viewer";
+import type { PaperlessPdfViewer } from "./paperless-pdf-viewer";
 
 export class PaperlessPayCard extends LitElement implements LovelaceCard {
   @property({ attribute: false }) public hass!: HomeAssistant;
@@ -33,7 +35,6 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
   @state() private _busy = new Set<number>();
   @state() private _error = "";
   @state() private _loading = true;
-  @state() private _zoom: PaperlessDoc | null = null;
 
   private _timer?: number;
   private _entityState?: string;
@@ -148,6 +149,18 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
     }
   }
 
+  /** Full-screen PDF view; lives on <body> so popups and dialogs cannot clip it. */
+  private _openViewer(d: PaperlessDoc): void {
+    const v = document.createElement("paperless-pdf-viewer") as PaperlessPdfViewer;
+    v.heading = d.title;
+    v.thumb = this._thumbs.get(d.id);
+    v.load = () =>
+      this._get<Blob>(`${this._config.url}/api/documents/${d.id}/preview/`, true).then((b) =>
+        b.arrayBuffer(),
+      );
+    document.body.appendChild(v);
+  }
+
   private _tagName(id: number): string {
     return this._tags.get(id)?.name ?? `#${id}`;
   }
@@ -171,7 +184,6 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
             </div>`
           : nothing}
         <div class="list">${this._docs.map((d) => this._renderDoc(d))}</div>
-        ${this._zoom ? this._renderZoom(this._zoom) : nothing}
       </ha-card>
     `;
   }
@@ -183,7 +195,7 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
     const age = ageDays(d.created);
     return html`
       <div class="doc ${busy ? "busy" : ""}">
-        <button class="thumb" @click=${() => (this._zoom = d)} aria-label="Vorschau vergrößern">
+        <button class="thumb" @click=${() => this._openViewer(d)} aria-label="Dokument ansehen">
           ${thumb
             ? html`<img src=${thumb} alt="" />`
             : html`<ha-icon icon="mdi:file-document-outline"></ha-icon>`}
@@ -224,16 +236,6 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
           <ha-icon icon=${busy ? "mdi:timer-sand" : "mdi:check-bold"}></ha-icon>
           Bezahlt
         </button>
-      </div>
-    `;
-  }
-
-  private _renderZoom(d: PaperlessDoc) {
-    const thumb = this._thumbs.get(d.id);
-    return html`
-      <div class="zoom" @click=${() => (this._zoom = null)}>
-        ${thumb ? html`<img src=${thumb} alt="" />` : nothing}
-        <div class="zoom-title">${d.title}</div>
       </div>
     `;
   }
@@ -370,25 +372,6 @@ export class PaperlessPayCard extends LitElement implements LovelaceCard {
     .chip:disabled {
       opacity: 0.5;
       cursor: default;
-    }
-    .zoom {
-      position: fixed;
-      inset: 0;
-      z-index: 10;
-      background: rgba(0, 0, 0, 0.85);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      padding: 24px;
-      color: #fff;
-    }
-    .zoom img {
-      max-width: 100%;
-      max-height: 85vh;
-      border-radius: 8px;
-      background: #fff;
     }
     @media (max-width: 600px) {
       .doc {

@@ -262,12 +262,14 @@ notices:                      # Hinweise mit Bestätigungs-Knopf, z. B. Müllton
 - **Losfahren:** Für Termine von heute mit Ort rechnet die Karte über Waze die Fahrzeit ab `origin` aus. Die Kachel zeigt „los 14:33", 15 Minuten vorher erscheint oben „Losfahren in 12 Min", danach rot „Jetzt losfahren!". Adressen werden über OpenStreetMap (Nominatim) in Koordinaten umgewandelt und im Browser zwischengespeichert. Wer das nicht möchte, setzt `geocode: false` und pflegt `places`. Online-Termine (Zoom, Teams, Links) werden übersprungen.
 - **Hinweise** sind sichtbar, solange die Entität nicht in `idle_states` steht (Standard: off/unknown/unavailable/none …). `{state}` und `{name}` werden im Titel ersetzt. Der Knopf ruft `action` auf und blendet den Hinweis sofort aus.
 
-## Zusatzkarte: Paperless „Noch zu zahlen“ (v0.30)
+## Zusatzkarte: Paperless „Noch zu zahlen“ (v0.30, PDF-Ansicht seit v0.31)
 
 Das Paket bringt eine zweite Karte mit: `custom:paperless-pay-card`. Sie zeigt alle Dokumente aus
 [Paperless-ngx](https://docs.paperless-ngx.com/) mit einem bestimmten Tag (z. B. „NochZuZahlen“) als Kacheln
 mit Vorschaubild, Korrespondent und Datum. Ein großer Knopf **Bezahlt** entfernt den Tag, weitere Tags lassen sich
-per Chip an- und abschalten. Antippen des Vorschaubilds vergrößert es.
+per Chip an- und abschalten. Antippen des Vorschaubilds öffnet das ganze PDF im Vollbild (alle Seiten
+untereinander, Lupe zum Vergrößern). Dafür lädt die Karte beim ersten Öffnen
+[pdf.js](https://mozilla.github.io/pdf.js/) von jsDelivr; ohne Internet bleibt es beim Vorschaubild der ersten Seite.
 
 ```yaml
 type: custom:paperless-pay-card

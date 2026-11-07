@@ -1,3 +1,4 @@
+import "./paperless-pay-card";
 import { LitElement, html, css, nothing, PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -6937,7 +6938,7 @@ if (!customElements.get("family-board-card")) {
 });
 
 console.info(
-  "%c FAMILY-BOARD-CARD %c v0.29.0 ",
+  "%c FAMILY-BOARD-CARD %c v0.30.0 ",
   "background:#5B8CFF;color:#fff;border-radius:3px 0 0 3px",
   "background:#222;color:#fff;border-radius:0 3px 3px 0",
 );

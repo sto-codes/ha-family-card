@@ -262,6 +262,42 @@ notices:                      # Hinweise mit Bestätigungs-Knopf, z. B. Müllton
 - **Losfahren:** Für Termine von heute mit Ort rechnet die Karte über Waze die Fahrzeit ab `origin` aus. Die Kachel zeigt „los 14:33", 15 Minuten vorher erscheint oben „Losfahren in 12 Min", danach rot „Jetzt losfahren!". Adressen werden über OpenStreetMap (Nominatim) in Koordinaten umgewandelt und im Browser zwischengespeichert. Wer das nicht möchte, setzt `geocode: false` und pflegt `places`. Online-Termine (Zoom, Teams, Links) werden übersprungen.
 - **Hinweise** sind sichtbar, solange die Entität nicht in `idle_states` steht (Standard: off/unknown/unavailable/none …). `{state}` und `{name}` werden im Titel ersetzt. Der Knopf ruft `action` auf und blendet den Hinweis sofort aus.
 
+## Zusatzkarte: Paperless „Noch zu zahlen“ (v0.30)
+
+Das Paket bringt eine zweite Karte mit: `custom:paperless-pay-card`. Sie zeigt alle Dokumente aus
+[Paperless-ngx](https://docs.paperless-ngx.com/) mit einem bestimmten Tag (z. B. „NochZuZahlen“) als Kacheln
+mit Vorschaubild, Korrespondent und Datum. Ein großer Knopf **Bezahlt** entfernt den Tag, weitere Tags lassen sich
+per Chip an- und abschalten. Antippen des Vorschaubilds vergrößert es.
+
+```yaml
+type: custom:paperless-pay-card
+url: http://192.168.10.164:8000      # Paperless, wie das Tablet es erreicht
+token: <Nur-Lese-Token>               # liest Liste, Vorschaubilder, Tag- und Korrespondentennamen
+tag: 15                               # diese Dokumente werden gezeigt
+tags: [15, 18, 14, 13, 12]            # Chips zum Umschalten (Standard: nur `tag`)
+paid_tag: 15                          # entfernt der Bezahlt-Knopf (Standard: `tag`)
+service: rest_command.paperless_tags_setzen   # schreibt die Tags (Standard)
+entity: sensor.topay                  # optional: neu laden, wenn sich der Zähler ändert
+refresh: 300                          # Sekunden
+```
+
+Voraussetzungen:
+
+- In Paperless `PAPERLESS_CORS_ALLOWED_HOSTS` um die Adresse von Home Assistant ergänzen, sonst blockiert der Browser.
+- Der Token der Karte steht in der Dashboard-Konfiguration: nur einen Benutzer mit Leserechten verwenden.
+- Geschrieben wird über einen Home-Assistant-Dienst, damit der Schreib-Token auf dem Server bleibt:
+
+```yaml
+rest_command:
+  paperless_tags_setzen:
+    url: "http://192.168.10.164:8000/api/documents/{{ id | int }}/"
+    method: PATCH
+    headers:
+      Authorization: !secret paperless_auth   # "Token …"
+    content_type: "application/json"
+    payload: '{"tags": {{ tags | map("int") | list | to_json }}}'
+```
+
 ## Termine anlegen / bearbeiten / löschen
 
 In der Tagesansicht eine freie Stelle in der Personenspalte anklicken öffnet den Dialog zum Anlegen (die Uhrzeit wird aus der Klick-Position übernommen); ein Klick auf einen Termin öffnet ihn zum Bearbeiten/Löschen. Ob das möglich ist, hängt vom Kalender ab: Die Karte liest `supported_features` der jeweiligen `calendar.*`-Entität und blendet Schreibaktionen aus, wenn der Kalender sie nicht unterstützt. Intern werden die WebSocket-Kommandos `calendar/event/create|update|delete` genutzt (dieselben wie die native HA-Kalenderoberfläche).

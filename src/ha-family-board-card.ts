@@ -16,6 +16,9 @@ import {
   splitAcrossDays,
   layoutDayColumns,
   dragTimes,
+  plannerRange,
+  plannerBuckets,
+  readableTextColor,
 } from "./events";
 import {
   localize,
@@ -24,13 +27,15 @@ import {
   formatCountdown,
   weekdayNames,
   formatWeekRange,
+  formatDayRange,
 } from "./localize";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
-type ViewName = "day" | "week" | "month" | "agenda" | "timeline";
-const ALL_VIEWS: ViewName[] = ["day", "timeline", "week", "month", "agenda"];
+type ViewName = "day" | "planner" | "week" | "month" | "agenda" | "timeline";
+const ALL_VIEWS: ViewName[] = ["day", "planner", "timeline", "week", "month", "agenda"];
+const PLANNER_DAYS_DEFAULT = 7;
 
 interface PersonConfig {
   name?: string;
@@ -104,6 +109,10 @@ export interface FamilyBoardConfig extends LovelaceCardConfig {
   max_columns?: number; // max side-by-side columns per person/day. default 3
   first_day?: "monday" | "sunday"; // week start. default monday
   scroll_to_now?: boolean; // auto-scroll day view to current time. default true
+  planner_days?: number; // planner view: number of day columns starting today. default 7
+  clock_header?: boolean; // wall display: big clock, date and current weather as the card header
+  back_path?: string; // shows a back button that navigates to this dashboard path
+  auto_back?: number; // kiosk: minutes without touch before navigating to back_path. 0=off
 }
 
 /** A collapsed "+N more" marker for dense overlap clusters in the day view. */
@@ -175,6 +184,7 @@ interface DialogState {
   recurring?: boolean; // event is part of a recurring series
   recurrenceRange: "" | "THISANDFUTURE"; // scope for edit/delete of a series
   calendarOptions?: string[]; // when a person has several writable calendars
+  pickPersons?: number[]; // planner "+": persons to choose from (avatar row in the dialog)
   busy?: boolean;
   error?: string;
 }
@@ -278,6 +288,26 @@ const startOfDay = (d: Date) => {
   return x;
 };
 
+/*
+ * Idle tracking for the kiosk options, shared by every card on the page: any touch, key
+ * or in-app navigation counts (also on other cards, e.g. ticking off a to-do next to the
+ * board), and it survives Lovelace re-creating the card after a reconnect.
+ */
+let lastActivity = Date.now();
+let activityWatched = false;
+const markActivity = (): void => {
+  lastActivity = Date.now();
+};
+function watchActivity(): void {
+  if (activityWatched) return;
+  activityWatched = true;
+  const opts = { capture: true, passive: true };
+  window.addEventListener("pointerdown", markActivity, opts);
+  window.addEventListener("keydown", markActivity, opts);
+  window.addEventListener("location-changed", markActivity, opts);
+  window.addEventListener("popstate", markActivity, opts);
+}
+
 const personColor = (p: PersonConfig, idx: number) =>
   p.color || FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
 
@@ -339,6 +369,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   @state() private _day: number = (new Date().getDay() + 6) % 7;
   @state() private _weekOffset = 0;
   @state() private _monthOffset = 0;
+  @state() private _planOffset = 0; // planner view: pages of `planner_days` from today
   @state() private _dialog?: DialogState;
   @state() private _todoDialog?: TodoDialogState;
   @state() private _todoBadgeDialog?: TodoBadgeDialogState;
@@ -364,12 +395,12 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   private _fetchedKey = "";
   private _timer?: number;
   private _tick?: number;
-  @state() private _forecast: Record<string, { temp: number; condition: string }> = {};
+  @state() private _forecast: Record<string, { temp: number; low?: number; condition: string }> =
+    {};
   private _weatherKey = "";
   private _scrolledKey = "";
   private _restoreFocus?: HTMLElement;
   private _ro?: ResizeObserver;
-  private _lastInteract = Date.now();
 
   public static async getConfigElement(): Promise<LovelaceCardEditor> {
     await import("./editor");
@@ -444,7 +475,10 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   /** Views shown in the toggle (config order-independent, default all). */
   private get _enabledViews(): ViewName[] {
     const v = this._config?.views;
-    const chosen = Array.isArray(v) ? ALL_VIEWS.filter((x) => v.includes(x)) : [];
+    // configured order wins (e.g. planner first on a wall tablet); unknown names are dropped
+    const chosen = Array.isArray(v)
+      ? v.filter((x, i): x is ViewName => ALL_VIEWS.includes(x) && v.indexOf(x) === i)
+      : [];
     return chosen.length ? chosen : [...ALL_VIEWS];
   }
 
@@ -467,12 +501,9 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     document.addEventListener("visibilitychange", this._onVisible);
     window.addEventListener("focus", this._onVisible);
     this._startTimer();
-    this.addEventListener("pointerdown", this._onInteract);
-    // minute tick so countdowns and progress bars stay live when idle
-    this._tick = window.setInterval(() => {
-      this._kioskReturn();
-      this.requestUpdate();
-    }, 60000);
+    watchActivity();
+    // minute tick so countdowns, progress bars and the header clock stay live when idle
+    this._scheduleTick();
     // recompute the fit-to-height scaling whenever the card is resized
     if (typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver(() => requestAnimationFrame(() => this._measureFit()));
@@ -485,16 +516,27 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     document.removeEventListener("keydown", this._onKeyDown);
     document.removeEventListener("visibilitychange", this._onVisible);
     window.removeEventListener("focus", this._onVisible);
-    this.removeEventListener("pointerdown", this._onInteract);
     this._stopTimer();
     if (this._tick) {
-      clearInterval(this._tick);
+      clearTimeout(this._tick);
       this._tick = undefined;
     }
     this._ro?.disconnect();
     this._ro = undefined;
     window.removeEventListener("pointermove", this._onDragMove);
     window.removeEventListener("pointerup", this._onDragUp);
+  }
+
+  /** Re-render right after every full minute (a plain 60 s interval drifts off the clock). */
+  private _scheduleTick(): void {
+    if (this._tick) clearTimeout(this._tick);
+    const now = new Date();
+    const wait = 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50;
+    this._tick = window.setTimeout(() => {
+      this._kioskReturn();
+      this.requestUpdate();
+      this._scheduleTick();
+    }, wait);
   }
 
   private get _progressOn(): boolean {
@@ -513,23 +555,37 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     return Math.min(100, Math.max(0, ((Date.now() - s) / (en - s)) * 100));
   }
 
-  private _onInteract = (): void => {
-    this._lastInteract = Date.now();
-  };
-
   /** Kiosk mode: after `auto_return` minutes without touch, go back to the default view. */
   private _kioskReturn(): void {
+    this._kioskBack();
     const min = Number(this._config?.auto_return ?? 0);
     if (!Number.isFinite(min) || min <= 0) return;
-    if (Date.now() - this._lastInteract < min * 60000) return;
+    if (Date.now() - lastActivity < min * 60000) return;
     if (this._dialog || this._todoDialog || this._todoBadgeDialog) return; // never yank an open dialog away
     const wanted = this._config.view ?? "day";
     const view = this._enabledViews.includes(wanted) ? wanted : this._enabledViews[0];
     if (this._view !== view) this._view = view;
     if (this._weekOffset !== 0) this._weekOffset = 0;
     if (this._monthOffset !== 0) this._monthOffset = 0;
+    if (this._planOffset !== 0) this._planOffset = 0;
     if (this._hiddenP.length) this._hiddenP = [];
     this._day = this._todayIndex();
+  }
+
+  /** Kiosk: after `auto_back` idle minutes leave for `back_path` (e.g. the tablet home screen). */
+  private _kioskBack(): void {
+    const min = Number(this._config?.auto_back ?? 0);
+    const path = this._config?.back_path;
+    if (!path || !Number.isFinite(min) || min <= 0) return;
+    if (Date.now() - lastActivity < min * 60000) return;
+    if (this._dialog || this._todoDialog || this._todoBadgeDialog) return;
+    if (document.visibilityState === "hidden" || !this.isConnected) return;
+    // never leave the dashboard editor (card preview / edit mode)
+    const host = this as unknown as { preview?: boolean; editMode?: boolean };
+    if (host.preview || host.editMode || location.search.includes("edit=1")) return;
+    if (location.pathname === path.split("?")[0]) return;
+    markActivity();
+    this._navigateBack();
   }
 
   /** Refresh when the tab/tablet becomes visible again. */
@@ -559,7 +615,14 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   }
 
   protected updated(changed: PropertyValues): void {
-    if ((changed.has("hass") || changed.has("_config")) && this.hass && this._config) {
+    const navChanged = ["_view", "_weekOffset", "_monthOffset", "_planOffset"].some((k) =>
+      changed.has(k as keyof FamilyBoardCard),
+    );
+    if (
+      (changed.has("hass") || changed.has("_config") || navChanged) &&
+      this.hass &&
+      this._config
+    ) {
       this._maybeFetch();
       this._maybeFetchWeather();
     }
@@ -707,6 +770,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
 
   /** Fetch window for the current view. */
   private _fetchRange(): { start: Date; end: Date } {
+    if (this._view === "planner") return this._plannerWindow();
     if (this._view === "month") {
       const { gridStart, weeks } = this._monthGrid();
       return { start: gridStart, end: new Date(gridStart.getTime() + weeks * 7 * DAY_MS) };
@@ -735,7 +799,12 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
         return `${id}:${st?.state ?? ""}:${st?.last_updated ?? ""}`;
       })
       .join(",");
-    const scope = this._view === "month" ? `m${this._monthOffset}` : `w${this._weekOffset}`;
+    const scope =
+      this._view === "month"
+        ? `m${this._monthOffset}`
+        : this._view === "planner"
+          ? `p${this._planOffset}:${this._plannerDays}:${toLocalDate(new Date())}`
+          : `w${this._weekOffset}`;
     const key = `${scope}|${cals}|${shared}|${sharedTodos}|${todos}|${todoState}`;
     if (key === this._fetchedKey) return;
     this._fetchedKey = key;
@@ -769,11 +838,12 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
         return_response: true,
       });
       const list: any[] = res?.response?.[ent]?.forecast ?? [];
-      const map: Record<string, { temp: number; condition: string }> = {};
+      const map: Record<string, { temp: number; low?: number; condition: string }> = {};
       for (const f of list) {
         if (!f?.datetime) continue;
         map[toLocalDate(new Date(f.datetime))] = {
           temp: Math.round(f.temperature),
+          low: Number.isFinite(Number(f.templow)) ? Math.round(Number(f.templow)) : undefined,
           condition: f.condition,
         };
       }
@@ -1008,10 +1078,12 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
       });
     }
     this._raw = cleaned;
-    // Week views index events by weekday; month builds its own grid from _raw.
+    // Week views index events by weekday; month and planner build their own grid from _raw.
     const { monday } = this._weekBounds();
     this._events =
-      this._view === "month" ? [] : cleaned.flatMap((r) => splitIntoSegments(r, monday));
+      this._view === "month" || this._view === "planner"
+        ? []
+        : cleaned.flatMap((r) => splitIntoSegments(r, monday));
     this._todoItemsByOwner = Object.fromEntries(
       Object.entries(todoItemsByOwner).map(([key, items]) => [
         key,
@@ -1950,34 +2022,24 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     const title = this._config.title ?? this._t("board_title");
     return html`
       <ha-card>
-        <div class="top">
-          <div class="title">${title}</div>
-          ${this._enabledViews.length > 1
-            ? html`<div class="switch" role="tablist">
-                ${this._enabledViews.map(
-                  (v) =>
-                    html`<button
-                      role="tab"
-                      aria-selected=${this._view === v}
-                      class=${this._view === v ? "on" : ""}
-                      @click=${() => (this._view = v)}
-                    >
-                      ${this._t(v)}
-                    </button>`,
-                )}
-              </div>`
-            : nothing}
-        </div>
+        ${this._config.clock_header
+          ? this._renderClockHeader()
+          : html`<div class="top">
+              <div class="titlewrap">${this._backButton()}<span class="title">${title}</span></div>
+              ${this._viewSwitch()}
+            </div>`}
         ${this._config.show_focus ? this._renderFocus() : nothing}
         ${this._view === "day"
           ? this._renderDay()
-          : this._view === "timeline"
-            ? this._renderTimeline()
-            : this._view === "week"
-              ? this._renderWeek()
-              : this._view === "month"
-                ? this._renderMonth()
-                : this._renderAgenda()}
+          : this._view === "planner"
+            ? this._renderPlanner()
+            : this._view === "timeline"
+              ? this._renderTimeline()
+              : this._view === "week"
+                ? this._renderWeek()
+                : this._view === "month"
+                  ? this._renderMonth()
+                  : this._renderAgenda()}
       </ha-card>
       ${this._dialog
         ? this._renderDialog()
@@ -1987,6 +2049,423 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
             ? this._renderTodoBadgeDialog()
             : nothing}
     `;
+  }
+
+  /** Segmented view toggle (only when more than one view is enabled). */
+  private _viewSwitch() {
+    if (this._enabledViews.length < 2) return nothing;
+    return html`<div class="switch" role="tablist">
+      ${this._enabledViews.map(
+        (v) =>
+          html`<button
+            role="tab"
+            aria-selected=${this._view === v}
+            class=${this._view === v ? "on" : ""}
+            @click=${() => (this._view = v)}
+          >
+            ${this._t(v)}
+          </button>`,
+      )}
+    </div>`;
+  }
+
+  /** Round back button, shown when `back_path` is set (wall tablet: back to the home dashboard). */
+  private _backButton() {
+    if (!this._config.back_path) return nothing;
+    return html`<button class="back" aria-label=${this._t("back")} @click=${this._navigateBack}>
+      <ha-icon icon="mdi:chevron-left"></ha-icon>
+    </button>`;
+  }
+
+  private _navigateBack = (): void => {
+    const path = this._config.back_path;
+    if (!path) return;
+    history.pushState(null, "", path);
+    window.dispatchEvent(
+      new CustomEvent("location-changed", { detail: { replace: false }, composed: true }),
+    );
+  };
+
+  /** Wall display header: big clock, weekday + date, current weather, view toggle. */
+  private _renderClockHeader() {
+    const now = new Date();
+    const locale = this.hass.locale?.language || "en";
+    const weekday = new Intl.DateTimeFormat(locale, { weekday: "long" }).format(now);
+    const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "long" }).format(now);
+    return html`
+      <div class="clockhead">
+        ${this._backButton()}
+        <div class="clock">
+          <span class="ctime">${formatTime(this.hass, now)}</span>
+          <span class="cdate"><b>${weekday}</b><span>${date}</span></span>
+        </div>
+        ${this._currentWeather()}
+        <span class="cspacer"></span>
+        ${this._viewSwitch()}
+      </div>
+    `;
+  }
+
+  /** Current conditions from the weather entity (plus today's high/low), or nothing. */
+  private _currentWeather() {
+    const ent = this._config.weather_entity;
+    const st = ent && this._config.show_weather !== false ? this.hass.states[ent] : undefined;
+    if (!st) return nothing;
+    const temp = Number(st.attributes?.temperature);
+    const unit = (st.attributes?.temperature_unit as string | undefined) ?? "°";
+    const fmt = (this.hass as any).formatEntityState;
+    const label = typeof fmt === "function" ? fmt(st) : st.state;
+    const today = this._forecast[toLocalDate(new Date())];
+    return html`<button class="cwx" @click=${() => this._moreInfo(ent!)}>
+      <ha-icon icon="mdi:${WEATHER_ICON[st.state] || "weather-cloudy"}"></ha-icon>
+      <span class="cwxmain">
+        <span class="cwxtemp">${Number.isFinite(temp) ? Math.round(temp) : "–"}${unit}</span>
+        <span class="cwxsub"
+          >${label}${today
+            ? html` · ↑${today.temp}°${today.low !== undefined ? html` ↓${today.low}°` : nothing}`
+            : nothing}</span
+        >
+      </span>
+    </button>`;
+  }
+
+  /** Avatar chips that hide/show a person in every view (legend-style filter). */
+  private _renderPersonFilter() {
+    return html`<div class="pfilter" role="group" aria-label=${this._t("filter_persons")}>
+      ${this._persons.map((p, i) => {
+        const off = this._isOff(i);
+        return html`<button
+          class="pchip ${off ? "off" : ""}"
+          aria-pressed=${!off}
+          style="--c:${personColor(p, i)}"
+          @click=${() => this._togglePerson(i)}
+        >
+          ${this._avatar(p, i)}<span>${this._personName(p, i)}</span>
+        </button>`;
+      })}
+    </div>`;
+  }
+
+  /* ---- planner (Skylight-style day columns) --------------------- */
+  private get _plannerDays(): number {
+    const n = Number(this._config?.planner_days ?? PLANNER_DAYS_DEFAULT);
+    return Number.isFinite(n) ? Math.min(14, Math.max(1, Math.round(n))) : PLANNER_DAYS_DEFAULT;
+  }
+
+  private _plannerWindow(): { start: Date; end: Date } {
+    return plannerRange(new Date(), this._plannerDays, this._planOffset);
+  }
+
+  private _swipeX = 0;
+  private _swipeY = 0;
+  // Touch uses touch events: once the browser takes a gesture for scrolling it sends
+  // pointercancel instead of pointerup, but touchend still arrives. Mouse/pen use pointer events.
+  private _onPlannerTouchStart = {
+    handleEvent: (e: TouchEvent) => {
+      this._swipeX = e.touches[0]?.clientX ?? 0;
+      this._swipeY = e.touches[0]?.clientY ?? 0;
+    },
+    passive: true,
+  };
+  private _onPlannerTouchEnd = (e: TouchEvent): void => {
+    const t = e.changedTouches[0];
+    if (t) this._plannerSwipe(t.clientX, t.clientY, e.currentTarget as HTMLElement);
+  };
+  private _onPlannerDown = (e: PointerEvent): void => {
+    if (e.pointerType === "touch") return;
+    this._swipeX = e.clientX;
+    this._swipeY = e.clientY;
+  };
+  private _onPlannerUp = (e: PointerEvent): void => {
+    if (e.pointerType === "touch") return;
+    this._plannerSwipe(e.clientX, e.clientY, e.currentTarget as HTMLElement);
+  };
+  /** Swipe left/right pages the planner — but only when the columns don't scroll sideways. */
+  private _plannerSwipe(x: number, y: number, grid: HTMLElement): void {
+    const dx = x - this._swipeX;
+    const dy = y - this._swipeY;
+    if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    if (grid.scrollWidth > grid.clientWidth + 2) return;
+    this._suppressClick = true;
+    setTimeout(() => (this._suppressClick = false), 0);
+    this._planOffset += dx < 0 ? 1 : -1;
+  }
+
+  private _renderPlanner() {
+    const days = this._plannerDays;
+    const { start, end } = this._plannerWindow();
+    const locale = this.hass.locale?.language || "en";
+    const wdShort = new Intl.DateTimeFormat(locale, { weekday: "short" });
+    const monthShort = new Intl.DateTimeFormat(locale, { month: "short" });
+    const todayMs = startOfDay(new Date()).getTime();
+    const raws = this._raw.filter(
+      (r) =>
+        !this._isOff(r.personIdx) &&
+        // to-dos without a due date are repeated on every day elsewhere; here only today
+        (r.kind !== "todo" || !!r.todo_due || startOfDay(r.start).getTime() === todayMs),
+    );
+    const buckets = plannerBuckets(raws, start, days);
+    const cols = buckets
+      .map((items, d) => ({
+        date: new Date(start.getFullYear(), start.getMonth(), start.getDate() + d),
+        items: this._mergeSameEvents(items),
+      }))
+      .filter(
+        ({ date }) =>
+          this._config.show_weekends !== false || (date.getDay() !== 0 && date.getDay() !== 6),
+      );
+    const canCreate = this._persons.some((p, i) => !this._isOff(i) && this._personCanCreate(p));
+    const range = formatDayRange(this.hass, start, end);
+    return html`
+      <div class="weekhead plnav">
+        <div class="weeknav">
+          <button class="nav" aria-label=${this._t("prev_days")} @click=${() => this._planOffset--}>
+            ‹
+          </button>
+          <button class="nav-now" @click=${() => (this._planOffset = 0)}>
+            ${this._planOffset === 0 ? html`${this._t("today")} · ${range}` : range}
+          </button>
+          <button class="nav" aria-label=${this._t("next_days")} @click=${() => this._planOffset++}>
+            ›
+          </button>
+        </div>
+        ${this._loading ? html`<span class="spinner"></span>` : nothing}
+        ${this._renderPersonFilter()}
+      </div>
+      ${this._loadError ? html`<div class="banner">${this._t("load_error")}</div>` : nothing}
+      <div
+        class="board planner"
+        lang=${locale}
+        style="--pl-cols:${cols.length}"
+        @pointerdown=${this._onPlannerDown}
+        @pointerup=${this._onPlannerUp}
+        @touchstart=${this._onPlannerTouchStart}
+        @touchend=${this._onPlannerTouchEnd}
+      >
+        ${cols.map(({ date, items }) => {
+          const today = date.getTime() === startOfDay(new Date()).getTime();
+          const rel = this._relativeDay(date);
+          return html`
+            <section
+              class="plcol ${today ? "today" : ""}"
+              aria-label=${date.toLocaleDateString(locale)}
+            >
+              <div
+                class="plhead"
+                role="button"
+                tabindex="0"
+                aria-label=${this._t("day")}
+                @click=${() => this._goToDate(date)}
+                @keydown=${(k: KeyboardEvent) => {
+                  if (k.key === "Enter" || k.key === " ") {
+                    k.preventDefault();
+                    this._goToDate(date);
+                  }
+                }}
+              >
+                <span class="plwd">${rel ?? wdShort.format(date)}</span>
+                <span class="pldate">${date.getDate()}</span>
+                <span class="plsub"
+                  >${rel ? wdShort.format(date) : monthShort.format(date)}${this._plannerWeather(
+                    date,
+                  )}</span
+                >
+              </div>
+              <div class="plbody">
+                ${items.length === 0
+                  ? html`<div class="plfree">${this._t("nothing_planned")}</div>`
+                  : items.map(({ e, owners }) => this._plannerTile(e, owners))}
+              </div>
+            </section>
+          `;
+        })}
+      </div>
+      ${canCreate
+        ? html`<button
+            class="plfab"
+            aria-label=${this._t("add_event")}
+            @click=${() => this._openPlannerCreate(this._planOffset === 0 ? new Date() : start)}
+          >
+            <ha-icon icon="mdi:plus"></ha-icon>
+          </button>`
+        : nothing}
+    `;
+  }
+
+  private _plannerWeather(date: Date) {
+    const f = this._forecast[toLocalDate(date)];
+    if (!f) return nothing;
+    return html`<span class="plwx" title=${f.condition}
+      ><ha-icon icon="mdi:${WEATHER_ICON[f.condition] || "weather-cloudy"}"></ha-icon
+      >${f.temp}°</span
+    >`;
+  }
+
+  /** Title without the duplicate auto-emoji when the calendar already brings its own mdi icon. */
+  private _plannerTitle(e: BoardEvent) {
+    const base = e.parts && e.parts > 1 ? `${e.title} (${e.part}/${e.parts})` : e.title;
+    const calIcon = e.ref.kind !== "todo" ? this._calIcon(e.ref.calendar) : undefined;
+    const emoji = calIcon ? "" : this._autoIcon(e.title);
+    return html`${e.continuesBefore ? "« " : ""}${emoji ? `${emoji} ` : ""}${base}${e.continuesAfter
+      ? " »"
+      : ""}`;
+  }
+
+  /**
+   * One tile per event and day. The same appointment in several people's
+   * calendars (same title, start and end) becomes ONE tile with all their
+   * avatars instead of repeating it.
+   */
+  private _mergeSameEvents(items: BoardEvent[]): { e: BoardEvent; owners: number[] }[] {
+    const out: { e: BoardEvent; owners: number[] }[] = [];
+    const byKey = new Map<string, { e: BoardEvent; owners: number[] }>();
+    for (const e of items) {
+      const owners = this._isShared(e)
+        ? (e.ref.shared_person_idxs ?? [])
+        : e.personIdx >= 0
+          ? [e.personIdx]
+          : [];
+      if (this._isTodo(e)) {
+        out.push({ e, owners });
+        continue;
+      }
+      const key = `${e.title.trim().toLowerCase()}|${e.ref.start.getTime()}|${e.ref.end.getTime()}`;
+      const hit = byKey.get(key);
+      if (hit) {
+        for (const o of owners) if (!hit.owners.includes(o)) hit.owners.push(o);
+        continue;
+      }
+      const entry = { e, owners: [...owners] };
+      byKey.set(key, entry);
+      out.push(entry);
+    }
+    return out;
+  }
+
+  /** Tiny round avatar (photo or initials) for event tiles. */
+  private _miniAvatar(idx: number) {
+    const p = this._persons[idx];
+    if (!p) return nothing;
+    const color = personColor(p, idx);
+    const pic = p.person
+      ? (this.hass.states[p.person]?.attributes?.entity_picture as string | undefined)
+      : undefined;
+    const name = this._personName(p, idx);
+    return pic
+      ? html`<span
+          class="mini"
+          title=${name}
+          style="background-image:url('${pic}');--c:${color}"
+        ></span>`
+      : html`<span class="mini initials" title=${name} style="--c:${color};background:${color}"
+          >${name.slice(0, 1).toUpperCase()}</span
+        >`;
+  }
+
+  private _ownerAvatars(e: BoardEvent, owners: number[]) {
+    const all = this._persons.length;
+    if (this._isShared(e) && (owners.length === 0 || owners.length >= all)) {
+      return html`<span class="plowners" title=${this._eventOwnerLabel(e)}
+        ><ha-icon class="plgroup" icon="mdi:account-group"></ha-icon
+      ></span>`;
+    }
+    if (owners.length === 0) return nothing;
+    return html`<span class="plowners">${owners.map((i) => this._miniAvatar(i))}</span>`;
+  }
+
+  private _plannerTile(e: BoardEvent, owners: number[]) {
+    const c = this._eventColor(e);
+    const todo = this._isTodo(e);
+    const title = this._plannerTitle(e);
+    const cls = `${this._isPast(e) ? "past" : ""} ${this._isTentative(e) ? "tentative" : ""} ${
+      todo ? "todo" : ""
+    }`;
+    const open = (ev: Event) => {
+      if (this._suppressClick) return;
+      ev.stopPropagation();
+      this._openEvent(e);
+    };
+    if (e.allDay && !todo) {
+      const fg = readableTextColor(c);
+      return html`<div
+        class="plall ${cls}"
+        style="--c:${c};${fg ? `color:${fg}` : ""}"
+        role="button"
+        tabindex="0"
+        @click=${open}
+        @keydown=${(k: KeyboardEvent) => this._onItemKey(k, e)}
+      >
+        ${this._calIconEl(e)}<span class="pltitle">${title}</span>${this._isShared(e) &&
+        (owners.length === 0 || owners.length >= this._persons.length)
+          ? nothing
+          : this._ownerAvatars(e, owners)}
+      </div>`;
+    }
+    const current = !e.allDay && this._isCurrent(e);
+    // the end part is dropped by a container query when the tile is too narrow for both
+    const end = (sep: string) =>
+      html`<span class="tend">${sep}${formatMinutes(this.hass, e.endMin)}</span>`;
+    const time = e.allDay
+      ? this._t("all_day")
+      : current
+        ? html`${this._t("now")}${end("–")}`
+        : e.continuesBefore && !e.continuesAfter
+          ? `${this._t("until")} ${formatMinutes(this.hass, e.endMin)}`
+          : e.endMin > e.startMin && !e.continuesAfter
+            ? html`${formatMinutes(this.hass, e.startMin)}${end("–")}`
+            : formatMinutes(this.hass, e.startMin);
+    return html`<div
+      class="plev ${cls} ${current ? "current" : ""}"
+      style="--c:${c}"
+      role="button"
+      tabindex="0"
+      @click=${open}
+      @keydown=${(k: KeyboardEvent) => this._onItemKey(k, e)}
+    >
+      <div class="plmeta"><span class="pltime">${time}</span></div>
+      <div class="pltitle ${todo ? "todo-line" : ""}">
+        ${todo ? this._renderTodoCheckbox(e) : nothing}${this._calIconEl(e)}<span>${title}</span>
+      </div>
+      ${e.location && !todo
+        ? html`<div class="plloc">
+            <ha-icon icon="mdi:map-marker-outline"></ha-icon><span>${e.location}</span>
+          </div>`
+        : nothing}
+      ${this._isShared(e) || owners.length > 1
+        ? html`<div class="plwho">${this._ownerAvatars(e, owners)}</div>`
+        : nothing}
+      ${current && this._progressOn
+        ? html`<div class="plprog"><span style="width:${this._progressPct(e)}%"></span></div>`
+        : nothing}
+    </div>`;
+  }
+
+  /** Planner "+": new event on that date; asks "for whom?" when several people can write. */
+  private _openPlannerCreate(date: Date): void {
+    const who = this._persons
+      .map((_, i) => i)
+      .filter((i) => !this._isOff(i) && this._personCanCreate(this._persons[i]));
+    if (who.length === 0) return;
+    let startMin: number | undefined;
+    if (startOfDay(date).getTime() === startOfDay(new Date()).getTime()) {
+      const now = new Date();
+      startMin = Math.min(23 * 60, (now.getHours() + 1) * 60); // next full hour
+    }
+    this._openCreateAt(who[0], date, startMin, who.length > 1 ? who : undefined);
+  }
+
+  /** Switch the "for whom?" choice in a create dialog to another person. */
+  private _pickDialogPerson(idx: number): void {
+    const d = this._dialog;
+    if (!d) return;
+    const writable = this._writableCals(this._persons[idx]);
+    if (writable.length === 0) return;
+    this._dialog = {
+      ...d,
+      personIdx: idx,
+      calendar: writable[0],
+      calendarOptions: writable.length > 1 ? writable : undefined,
+    };
   }
 
   /** Current + next timed event for a person, view-independent (from _raw). */
@@ -3080,18 +3559,23 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   }
 
   private _openCreate(idx: number, day: number, startMin?: number): void {
+    this._openCreateAt(idx, this._dateForDay(day), startMin);
+  }
+
+  private _openCreateAt(idx: number, date: Date, startMin?: number, pickPersons?: number[]): void {
     const p = this._persons[idx];
     const writable = this._writableCals(p);
     if (writable.length === 0) return;
-    const base = startOfDay(this._dateForDay(day));
     const sMin = startMin ?? Math.max(this._startMin, 9 * 60);
-    const start = new Date(base.getTime() + sMin * 60000);
+    // local wall-clock time on that date (stays right on DST days)
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, sMin);
     const end = new Date(start.getTime() + 60 * 60000);
     this._dialog = {
       mode: "create",
       personIdx: idx,
       calendar: writable[0],
       calendarOptions: writable.length > 1 ? writable : undefined,
+      pickPersons,
       canUpdate: true,
       canDelete: false,
       summary: "",
@@ -3352,6 +3836,24 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
               ✕
             </button>
           </div>
+          ${d.mode === "create" && d.pickPersons && d.pickPersons.length > 1
+            ? html`<div class="fld">
+                <span>${this._t("for_whom")}</span>
+                <div class="whom">
+                  ${d.pickPersons.map((i) => {
+                    const p = this._persons[i];
+                    return html`<button
+                      class="pchip ${i === d.personIdx ? "sel" : ""}"
+                      aria-pressed=${i === d.personIdx}
+                      style="--c:${personColor(p, i)}"
+                      @click=${() => this._pickDialogPerson(i)}
+                    >
+                      ${this._avatar(p, i)}<span>${this._personName(p, i)}</span>
+                    </button>`;
+                  })}
+                </div>
+              </div>`
+            : nothing}
           ${d.calendarOptions && d.calendarOptions.length > 1
             ? html`<label class="fld">
                 <span>${this._t("field_calendar")}</span>
@@ -3661,6 +4163,478 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
       padding: 12px 16px;
       border-bottom: 1px solid var(--divider-color);
     }
+    .titlewrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    button.back {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      color: var(--primary-text-color);
+      background: var(--fb-soft, color-mix(in srgb, var(--primary-text-color) 8%, transparent));
+    }
+    button.back ha-icon {
+      --mdc-icon-size: 26px;
+    }
+    /* wall display header: clock · date · weather · view toggle */
+    .clockhead {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 22px;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .clock {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .ctime {
+      font-size: var(--fb-clock-size, 54px);
+      font-weight: 300;
+      letter-spacing: -2px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .cdate {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+    .cdate b {
+      font-size: 21px;
+      font-weight: 750;
+      letter-spacing: -0.3px;
+    }
+    .cdate span {
+      font-size: 14px;
+      color: var(--secondary-text-color);
+    }
+    button.cwx {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      border: none;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      padding: 7px 14px 7px 10px;
+      border-radius: 18px;
+      background: var(--fb-soft, color-mix(in srgb, var(--primary-text-color) 7%, transparent));
+    }
+    button.cwx ha-icon {
+      --mdc-icon-size: 34px;
+      color: var(--fb-weather-icon, #ffd77a);
+    }
+    .cwxmain {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.15;
+    }
+    .cwxtemp {
+      font-size: 22px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .cwxsub {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+    .cspacer {
+      flex: 1;
+    }
+    /* person filter chips */
+    .pfilter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-left: auto;
+    }
+    button.pchip {
+      --fb-avatar-size: 24px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 12px 3px 3px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+      background: color-mix(in srgb, var(--c) 16%, transparent);
+      color: var(--primary-text-color);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition:
+        opacity 0.2s ease,
+        background 0.2s ease;
+    }
+    button.pchip.off {
+      opacity: 0.4;
+      background: transparent;
+      border-color: var(--divider-color);
+    }
+    button.pchip.off .avatar {
+      filter: grayscale(1);
+    }
+    button.pchip.sel {
+      background: color-mix(in srgb, var(--c) 34%, transparent);
+      border-color: var(--c);
+    }
+    .whom {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    /* planner: one column per day, Skylight-style */
+    .plnav {
+      gap: 10px 14px;
+    }
+    .board.planner {
+      display: grid;
+      grid-template-columns: repeat(var(--pl-cols), minmax(var(--fb-planner-min, 136px), 1fr));
+      gap: var(--fb-planner-gap, 10px);
+      padding: 12px 14px 14px;
+      margin-top: 0;
+      height: var(--fb-planner-height, 62vh);
+      max-height: none;
+      overflow-x: auto;
+      overflow-y: hidden;
+      box-sizing: border-box;
+      scroll-snap-type: x proximity;
+      touch-action: pan-x pan-y;
+    }
+    .plcol {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      border-radius: var(--fb-planner-radius, 20px);
+      background: var(--fb-col-bg, color-mix(in srgb, var(--primary-text-color) 4%, transparent));
+      border: 1px solid color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+      scroll-snap-align: start;
+      overflow: hidden;
+    }
+    .plcol.today {
+      background: var(--fb-today-bg, color-mix(in srgb, var(--fb-accent) 10%, transparent));
+      border-color: color-mix(in srgb, var(--fb-accent) 45%, transparent);
+    }
+    .plhead {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 9px 6px 8px;
+    }
+    .plwd {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--secondary-text-color);
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .plcol.today .plwd {
+      color: var(--primary-text-color);
+    }
+    .pldate {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      height: 40px;
+      font-size: 28px;
+      font-weight: 300;
+      letter-spacing: -1px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .plcol.today .pldate {
+      font-weight: 650;
+      font-size: 22px;
+      letter-spacing: -0.5px;
+      border-radius: 50%;
+      background: var(--fb-accent);
+      color: var(--fb-accent-text, var(--text-primary-color, #fff));
+    }
+    .plsub {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+    .plwx {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--primary-text-color);
+    }
+    .plwx ha-icon {
+      --mdc-icon-size: 15px;
+      color: var(--fb-weather-icon, var(--secondary-text-color));
+    }
+    .plhead {
+      cursor: pointer;
+      border-radius: 16px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .plhead:active {
+      background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+    }
+    ha-card {
+      position: relative;
+    }
+    button.plfab {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      z-index: 3;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      background: var(--fb-accent);
+      color: var(--fb-accent-text, var(--text-primary-color, #fff));
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      transition: transform 0.12s ease;
+    }
+    button.plfab:active {
+      transform: scale(0.94);
+    }
+    button.plfab ha-icon {
+      --mdc-icon-size: 28px;
+    }
+    .plbody {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 2px 8px 12px;
+      scrollbar-width: none;
+      -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+      mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+    }
+    .plbody::-webkit-scrollbar {
+      display: none;
+    }
+    .plfree {
+      margin: 10px 0 0;
+      padding: 14px 0;
+      border-radius: 12px;
+      border: 1px dashed color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+      text-align: center;
+      font-size: 12.5px;
+      color: var(--secondary-text-color);
+      opacity: 0.7;
+    }
+    .plall,
+    .plev {
+      flex: none;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition:
+        transform 0.12s ease,
+        opacity 0.2s ease;
+    }
+    .plall:active,
+    .plev:active {
+      transform: scale(0.98);
+    }
+    .plall {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px 6px 10px;
+      border-radius: 12px;
+      background: var(--c);
+      color: #fff;
+      font-size: var(--fb-planner-size, 13.5px);
+      font-weight: 650;
+      min-height: 30px;
+      box-sizing: border-box;
+    }
+    .plall .pltitle {
+      flex: 1;
+      min-width: 0;
+      line-height: 1.2;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      hyphens: auto;
+      overflow-wrap: break-word;
+    }
+    .plall ha-icon.cicon {
+      --mdc-icon-size: 16px;
+      flex: none;
+    }
+    .plev {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 8px 10px 9px 13px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--c) 17%, transparent);
+      box-shadow: inset 4px 0 0 var(--c);
+      overflow: hidden;
+    }
+    .plev.current .pltime {
+      color: var(--primary-text-color);
+    }
+    .plev.current {
+      background: color-mix(in srgb, var(--c) 30%, transparent);
+      box-shadow:
+        inset 4px 0 0 var(--c),
+        0 0 0 1.5px var(--c),
+        0 6px 18px color-mix(in srgb, var(--c) 35%, transparent);
+    }
+    .plev.tentative {
+      background: transparent;
+      box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c) 70%, transparent);
+      border: none;
+      outline: 1.5px dashed var(--c);
+      outline-offset: -1.5px;
+    }
+    .plmeta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 18px;
+    }
+    .plev {
+      container-type: inline-size;
+    }
+    @container (max-width: 80px) {
+      .pltime .tend {
+        display: none;
+      }
+    }
+    .pltime {
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      color: color-mix(in srgb, var(--c) 55%, var(--primary-text-color));
+      white-space: nowrap;
+    }
+    .plev .pltitle {
+      display: flex;
+      align-items: flex-start;
+      gap: 4px;
+      font-size: var(--fb-planner-size, 14px);
+      font-weight: 600;
+      line-height: 1.25;
+      hyphens: auto;
+      overflow-wrap: break-word;
+    }
+    .plev .pltitle > span {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .plloc {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 11.5px;
+      color: var(--secondary-text-color);
+      min-width: 0;
+    }
+    .plloc span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .plloc ha-icon {
+      --mdc-icon-size: 13px;
+      flex: none;
+    }
+    .plprog {
+      height: 3px;
+      border-radius: 2px;
+      margin-top: 3px;
+      background: color-mix(in srgb, var(--c) 25%, transparent);
+      overflow: hidden;
+    }
+    .plprog span {
+      display: block;
+      height: 100%;
+      background: var(--c);
+    }
+    .plwho {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 1px;
+    }
+    .plwho .plowners {
+      margin-left: 0;
+    }
+    .board.planner .plcol:last-child .plbody {
+      padding-bottom: 76px;
+    }
+    .plowners {
+      display: inline-flex;
+      align-items: center;
+      margin-left: auto;
+      padding-left: 6px;
+      flex: none;
+    }
+    .plowners .mini + .mini {
+      margin-left: -6px;
+    }
+    .mini {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background-size: cover;
+      background-position: center;
+      box-shadow:
+        0 0 0 1.5px var(--c),
+        0 0 0 3px var(--fb-mini-ring, var(--card-background-color, #222));
+    }
+    .mini.initials {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: #1b1726;
+    }
+    .plgroup {
+      --mdc-icon-size: 18px;
+      opacity: 0.8;
+    }
+    .plall .mini {
+      box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8);
+    }
     /* one-switch compact density */
     :host([compact]) {
       --fb-title-size: 14px;
@@ -3782,10 +4756,11 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     }
     .switch button.on,
     .tabs button.on {
-      background: var(--primary-color);
-      color: var(--text-primary-color, #fff);
+      background: var(--fb-switch-on, var(--primary-color));
+      color: var(--fb-switch-on-text, var(--text-primary-color, #fff));
       font-weight: 600;
-      box-shadow: 0 1px 4px color-mix(in srgb, var(--primary-color) 45%, transparent);
+      box-shadow: 0 1px 4px
+        color-mix(in srgb, var(--fb-switch-on, var(--primary-color)) 45%, transparent);
     }
     .tabs button.today:not(.on) {
       box-shadow: inset 0 -2px 0 var(--fb-accent);
@@ -4842,7 +5817,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     }
     .mdate.today {
       background: var(--fb-accent);
-      color: var(--text-primary-color, #fff);
+      color: var(--fb-accent-text, var(--text-primary-color, #fff));
       border-radius: 50%;
     }
     .mchips {
@@ -5187,6 +6162,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     }
     .row .fld {
       flex: 1;
+      min-width: 0; /* datetime inputs have a wide intrinsic size; let them shrink */
     }
     input,
     textarea,
@@ -5306,7 +6282,7 @@ if (!customElements.get("family-board-card")) {
 });
 
 console.info(
-  "%c FAMILY-BOARD-CARD %c v0.26.0 ",
+  "%c FAMILY-BOARD-CARD %c v0.27.0 ",
   "background:#5B8CFF;color:#fff;border-radius:3px 0 0 3px",
   "background:#222;color:#fff;border-radius:0 3px 3px 0",
 );

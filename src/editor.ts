@@ -32,7 +32,7 @@ const PALETTE = [
   "#90a4ae",
 ];
 
-const VIEW_VALUES = ["day", "timeline", "week", "month", "agenda"];
+const VIEW_VALUES = ["day", "planner", "timeline", "week", "month", "agenda"];
 
 // One ha-form per person row, with entity pickers filtered by domain.
 const PERSON_SCHEMA = [
@@ -124,6 +124,7 @@ export class FamilyBoardCardEditor extends LitElement implements LovelaceCardEdi
     const hasDay = views.includes("day");
     const hasTimeline = views.includes("timeline");
     const hasWeek = views.includes("week");
+    const hasPlanner = views.includes("planner");
 
     const layout: unknown[] = [];
     if (hasDay || hasTimeline) {
@@ -165,9 +166,27 @@ export class FamilyBoardCardEditor extends LitElement implements LovelaceCardEdi
         },
       });
     }
+    if (hasPlanner) {
+      layout.push({
+        name: "planner_days",
+        selector: { number: { min: 1, max: 14, step: 1, mode: "slider" } },
+      });
+    }
     layout.push({ name: "full_height", selector: { boolean: {} } });
 
     const extras: unknown[] = [
+      { name: "clock_header", selector: { boolean: {} } },
+      { name: "back_path", selector: { text: {} } },
+      ...(cfg.back_path
+        ? [
+            {
+              name: "auto_back",
+              selector: {
+                number: { min: 0, max: 60, step: 1, mode: "box", unit_of_measurement: "min" },
+              },
+            },
+          ]
+        : []),
       {
         name: "auto_return",
         selector: { number: { min: 0, max: 60, step: 1, mode: "box", unit_of_measurement: "min" } },
@@ -316,7 +335,8 @@ export class FamilyBoardCardEditor extends LitElement implements LovelaceCardEdi
       keys.forEach((k) => delete (cfg as Record<string, unknown>)[k]);
     if (kind === "tablet") {
       Object.assign(cfg, {
-        view: "day",
+        view: (cfg.views ?? VIEW_VALUES).includes("planner") ? "planner" : "day",
+        clock_header: true,
         full_height: true,
         fit_height: true,
         trim_hours: true,
@@ -328,6 +348,7 @@ export class FamilyBoardCardEditor extends LitElement implements LovelaceCardEdi
       clear(["full_height", "fit_height", "auto_return"]);
     } else {
       clear([
+        "clock_header",
         "full_height",
         "fit_height",
         "trim_hours",

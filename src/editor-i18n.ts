@@ -56,6 +56,10 @@ const EN: Dict = {
   l_hidden: "Hidden on start",
   l_compact: "Compact layout",
   l_map_url: "Map link (template)",
+  l_planner_days: "Planner: number of days",
+  l_clock_header: "Clock header for wall displays",
+  l_back_path: "Back button to (dashboard path)",
+  l_auto_back: "Go back after idle (min., 0 = off)",
   l_shared_calendar: "Shared calendars",
 
   /* ---- helper texts ---------------------------------------------- */
@@ -84,6 +88,10 @@ const EN: Dict = {
   h_hidden: "Column starts collapsed; a click on the header brings it back",
   h_compact: "Smaller fonts and tighter spacing in a single switch",
   h_map_url: "{location} is substituted, e.g. https://maps.apple.com/?q={location}",
+  h_planner_days: "Day columns starting today; swipe or ‹ › pages to the next days",
+  h_clock_header: "Big clock, date and current weather instead of the title",
+  h_back_path: "e.g. /dashboard-tablet/home – shows a round back button",
+  h_auto_back: "Kiosk: returns to that path after X minutes without a touch",
   h_shared_calendar:
     "Events from these calendars are shown once as cross-person bars instead of inside a single person column",
 
@@ -112,7 +120,7 @@ const EN: Dict = {
 
   /* ---- presets ---------------------------------------------------- */
   p_tablet: "🖥️ Wall tablet",
-  p_tablet_title: "Full screen, auto-fit, return to today",
+  p_tablet_title: "Full-screen planner with clock, returns to today",
   p_phone: "📱 Phone",
   p_phone_title: "Agenda as start view, compact columns",
   p_reset: "🧩 Default",
@@ -187,6 +195,10 @@ const DE: Dict = {
   l_hidden: "Beim Start ausgeblendet",
   l_compact: "Kompakte Darstellung",
   l_map_url: "Karten-Link (Vorlage)",
+  l_planner_days: "Planer: Anzahl Tage",
+  l_clock_header: "Uhr-Kopf für Wandanzeigen",
+  l_back_path: "Zurück-Knopf zu (Dashboard-Pfad)",
+  l_auto_back: "Nach Inaktivität zurück (Min., 0 = aus)",
   l_shared_calendar: "Gemeinsame Kalender",
 
   h_hide_patterns: "Textmuster, z. B. „Hofpause“ – Treffer werden ausgeblendet",
@@ -214,6 +226,10 @@ const DE: Dict = {
   h_hidden: "Spalte startet eingeklappt; ein Klick auf den Kopf holt sie zurück",
   h_compact: "Kleinere Schriften und engere Abstände in einem Schalter",
   h_map_url: "{location} wird ersetzt, z. B. https://maps.apple.com/?q={location}",
+  h_planner_days: "Tages-Spalten ab heute; Wischen oder ‹ › blättert weiter",
+  h_clock_header: "Große Uhr, Datum und aktuelles Wetter statt des Titels",
+  h_back_path: "z. B. /dashboard-tablet/home – zeigt einen runden Zurück-Knopf",
+  h_auto_back: "Kiosk: kehrt nach X Minuten ohne Berührung zu diesem Pfad zurück",
   h_shared_calendar:
     "Termine aus diesen Kalendern werden einmal als Querbalken über alle Personen dargestellt statt in nur einer Spalte",
 
@@ -238,7 +254,7 @@ const DE: Dict = {
   w_empty: "＋ Leer starten",
 
   p_tablet: "🖥️ Wandtablet",
-  p_tablet_title: "Vollbild, Auto-Fit, Rückkehr zu heute",
+  p_tablet_title: "Vollbild-Planer mit Uhr, Rückkehr zu heute",
   p_phone: "📱 Handy",
   p_phone_title: "Agenda als Startansicht, kompakte Spalten",
   p_reset: "🧩 Standard",

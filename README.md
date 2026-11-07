@@ -6,6 +6,8 @@
 
 Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https://www.home-assistant.io/). Personen stehen als Spalten oben (mit Avatar aus der `person.*`-Entität), links läuft die Zeitleiste. Die Karte zeigt auf einen Blick, welche Aktivitäten gleichzeitig an unterschiedlichen Orten stattfinden — für bis zu 10 Personen.
 
+- **Planer (neu in v0.27)** – die Wandkalender-Ansicht im Skylight-Stil: ein Tag pro Spalte ab heute, farbige Termin-Kacheln je Person, Ganztägiges als Balken oben, Wetter pro Tag, laufender Termin mit Fortschritt. Derselbe Termin bei mehreren Personen wird **eine** Kachel mit allen Avataren. Wischen oder ‹ › blättert, ein Tipp auf den Tageskopf öffnet die Tagesansicht, der runde **＋**-Knopf legt einen Termin an und fragt „Für wen?“.
+- **Uhr-Kopf für Wandanzeigen** – `clock_header`: große Uhr, Wochentag/Datum und aktuelles Wetter mit Höchst-/Tiefstwert statt des Titels; optional ein runder **Zurück-Knopf** (`back_path`) und automatische Rückkehr nach Inaktivität (`auto_back`).
 - **Tagesansicht** – Personen als Spalten, geteilte Zeitachse, Jetzt-Linie; **überlappende Termine** werden nebeneinander dargestellt.
 - **Wochenansicht** – Wochentage als Zeilen, Personen als Spalten, kompakte Termin-Chips.
 - **Monatsansicht** – klassisches Monats-Grid mit farbigen Terminen pro Person; Klick auf einen Tag springt in die Tagesansicht.
@@ -46,7 +48,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Kompakt-Modus** – ein Schalter (`compact`) für kleinere Schriften und engere Abstände, statt drei Regler einzeln zu justieren.
 - **Personen beim Start ausgeblendet** – `hidden: true` pro Person; die Spalte startet eingeklappt und ein Klick auf den Kopf holt sie zurück.
 
-> Status: **v0.26 – vollständige Familien-Tagesplanung: 5 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
+> Status: **v0.27 – Wandkalender: Planer-Ansicht, Uhr-Kopf, Zurück-Knopf; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
 
 ## Installation (HACS)
 
@@ -70,7 +72,7 @@ type: module
 ```yaml
 type: custom:family-board-card
 title: Familienplan  # optional, eigener Kartentitel
-view: day            # day | week
+view: day            # day | planner | timeline | week | month | agenda
 time_grid: 30        # 15 | 30 | 60
 start_hour: 6
 end_hour: 22
@@ -111,9 +113,13 @@ persons:
 | `auto_icons`    | boolean | `false` | Emoji je Termin nach Stichwort automatisch voranstellen |
 | `icon_patterns` | Liste   | –       | Eigene Symbol-Regeln, z. B. `["Oma => 👵"]` |
 | `auto_return`   | number  | `0`     | Kiosk: nach X Minuten ohne Berührung zurück zur Startansicht/heute (0 = aus) |
+| `planner_days`  | number  | `7`     | Planer: Anzahl Tages-Spalten ab heute (1–14) |
+| `clock_header`  | boolean | `false` | Wandanzeige: große Uhr, Datum und aktuelles Wetter statt des Titels |
+| `back_path`     | string  | –       | Zeigt einen runden Zurück-Knopf, der zu diesem Pfad navigiert, z. B. `/dashboard-tablet/home` |
+| `auto_back`     | number  | `0`     | Kiosk: nach X Minuten ohne Berührung (irgendwo auf der Seite) zu `back_path` zurück (0 = aus) |
 | `title`          | string  | –       | Eigener Kartentitel (Default: lokalisiert „Familienplan") |
-| `view`          | string  | `day`   | Startansicht: `day`, `timeline`, `week`, `month` oder `agenda` |
-| `views`         | Liste   | alle    | Welche Ansichten im Umschalter erscheinen, z. B. `[day, agenda]` |
+| `view`          | string  | `day`   | Startansicht: `day`, `planner`, `timeline`, `week`, `month` oder `agenda` |
+| `views`         | Liste   | alle    | Welche Ansichten im Umschalter erscheinen – in dieser Reihenfolge, z. B. `[planner, day, month]` |
 | `time_grid`     | number  | `30`    | Raster der Zeitleiste in Minuten |
 | `start_hour`    | number  | `6`     | Erste sichtbare Stunde |
 | `end_hour`      | number  | `22`    | Letzte sichtbare Stunde |
@@ -155,7 +161,12 @@ Die Karte übernimmt automatisch Farben & Schrift des Themes. Für Feintuning gi
 
 | Token | Default | Wirkung |
 |-------|---------|---------|
-| `--fb-accent` | `--primary-color` | „Heute"-/Akzentfarbe |
+| `--fb-accent` | `--primary-color` | „Heute"-/Akzentfarbe (Planer: Datumskreis und ＋-Knopf) |
+| `--fb-accent-text` | `--text-primary-color` | Schrift auf der Akzentfarbe |
+| `--fb-switch-on` / `--fb-switch-on-text` | `--primary-color` | Aktiver Knopf im Ansichts-Umschalter |
+| `--fb-planner-min` / `--fb-planner-gap` | `136px` / `10px` | Planer: Mindestbreite und Abstand der Tages-Spalten |
+| `--fb-planner-size` | `14px` | Planer: Schriftgröße der Termin-Titel |
+| `--fb-planner-height` | `62vh` | Planer: Höhe ohne `full_height` |
 | `--fb-now-color` | `--error-color` | Jetzt-Linie & Fortschritt |
 | `--fb-radius` | `7px` | Ecken der Termin-Blöcke |
 | `--fb-radius-sm` | `5px` | Ecken der Chips |
@@ -224,6 +235,7 @@ In der Tagesansicht eine freie Stelle in der Personenspalte anklicken öffnet de
 - [x] Drag & Drop zum Verschieben von Terminen
 - [x] Aufnahme in den offiziellen HACS-Store
 - [x] Lokalisierter visueller Editor (DE/EN)
+- [x] Planer-Ansicht und Uhr-Kopf für Wandkalender (Skylight-Stil)
 - [ ] Orts-/Konflikterkennung (z. B. „niemand zuhause", Abhol-Lücken)
 
 ## Lizenz

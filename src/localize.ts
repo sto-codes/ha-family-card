@@ -63,6 +63,15 @@ const EN: Dict = {
   todo_items: "to-dos",
   todo_due: "Due:",
   todo_complete: "Mark as done",
+  planner: "Planner",
+  prev_days: "Earlier days",
+  next_days: "Later days",
+  back: "Back",
+  nothing_planned: "Nothing planned",
+  now: "now",
+  for_whom: "For whom?",
+  filter_persons: "Show or hide people",
+  until: "until",
 };
 
 const DE: Dict = {
@@ -123,6 +132,15 @@ const DE: Dict = {
   todo_items: "To-dos",
   todo_due: "Fällig:",
   todo_complete: "Als erledigt markieren",
+  planner: "Planer",
+  prev_days: "Frühere Tage",
+  next_days: "Spätere Tage",
+  back: "Zurück",
+  nothing_planned: "Nichts geplant",
+  now: "jetzt",
+  for_whom: "Für wen?",
+  filter_persons: "Personen ein- oder ausblenden",
+  until: "bis",
 };
 
 const TABLE: Record<string, Dict> = { en: EN, de: DE };
@@ -195,6 +213,13 @@ export function formatCountdown(hass: any, date: Date): string {
   const hours = Math.round(min / 60);
   if (hours < 24) return rtf.format(hours, "hour");
   return rtf.format(Math.round(hours / 24), "day");
+}
+
+/** Localized "7 Nov – 13 Nov" range for a span of days (`end` exclusive). */
+export function formatDayRange(hass: any, start: Date, end: Date): string {
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
+  const fmt = new Intl.DateTimeFormat(intlLocale(hass), { day: "numeric", month: "short" });
+  return `${fmt.format(start)} – ${fmt.format(last)}`;
 }
 
 /** Localized "1 Jan – 7 Jan" style range for a week. */

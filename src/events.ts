@@ -144,19 +144,23 @@ export function splitAcrossDays(raw: RawEvent, gridStart: Date, numDays: number)
   // "day X of Y" for events that span multiple calendar days
   const firstDay = new Date(raw.start);
   firstDay.setHours(0, 0, 0, 0);
-  const totalParts = Math.max(1, Math.ceil((raw.end.getTime() - firstDay.getTime()) / DAY_MS));
+  // count calendar days (not 24-h blocks) so DST days don't add or lose a part
+  const lastDay = new Date(raw.end);
+  lastDay.setHours(0, 0, 0, 0);
+  const totalParts = Math.max(
+    1,
+    calendarDaysBetween(firstDay, lastDay) + (raw.end.getTime() > lastDay.getTime() ? 1 : 0),
+  );
+  const starts = dayStarts(gridStart, numDays + 1);
   for (let d = 0; d < numDays; d++) {
-    const dayStart = new Date(gridStart.getTime() + d * DAY_MS);
-    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+    const dayStart = starts[d];
+    const dayEnd = starts[d + 1];
     const segStartMs = Math.max(raw.start.getTime(), dayStart.getTime());
     const segEndMs = Math.min(raw.end.getTime(), dayEnd.getTime());
     if (segEndMs <= segStartMs) continue;
     const startMin = raw.allDay ? 0 : Math.round((segStartMs - dayStart.getTime()) / 60000);
     const endMin = raw.allDay ? 1440 : Math.round((segEndMs - dayStart.getTime()) / 60000);
-    const part =
-      totalParts > 1
-        ? Math.round((dayStart.getTime() - firstDay.getTime()) / DAY_MS) + 1
-        : undefined;
+    const part = totalParts > 1 ? calendarDaysBetween(firstDay, dayStart) + 1 : undefined;
     segs.push({
       part,
       parts: totalParts > 1 ? totalParts : undefined,
@@ -175,6 +179,76 @@ export function splitAcrossDays(raw: RawEvent, gridStart: Date, numDays: number)
     });
   }
   return segs;
+}
+
+/** Local midnight of `start`'s day and the following days (DST-safe: calendar days, not 24 h). */
+export function dayStarts(start: Date, count: number): Date[] {
+  const out: Date[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+  }
+  return out;
+}
+
+/** Whole calendar days from `a` to `b` (both local), ignoring DST hour shifts. */
+export function calendarDaysBetween(a: Date, b: Date): number {
+  const ua = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const ub = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((ub - ua) / DAY_MS);
+}
+
+/**
+ * Window of the planner view: `days` calendar days starting today, paged by
+ * `offset` (offset 1 = the next `days` days).
+ */
+export function plannerRange(now: Date, days: number, offset: number): { start: Date; end: Date } {
+  const n = Math.max(1, Math.round(days));
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset * n);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + n);
+  return { start, end };
+}
+
+/**
+ * Bucket events into the planner's day columns: per day all-day items first,
+ * then timed items by start time (ties: longer first, then title).
+ */
+export function plannerBuckets(raws: RawEvent[], start: Date, days: number): BoardEvent[][] {
+  const buckets: BoardEvent[][] = Array.from({ length: days }, () => []);
+  for (const r of raws) {
+    for (const s of splitAcrossDays(r, start, days)) buckets[s.day].push(s);
+  }
+  for (const b of buckets) {
+    b.sort(
+      (x, y) =>
+        Number(y.allDay) - Number(x.allDay) ||
+        x.startMin - y.startMin ||
+        y.endMin - x.endMin ||
+        x.title.localeCompare(y.title),
+    );
+  }
+  return buckets;
+}
+
+/**
+ * Text color that stays readable on a solid background: near-black on light
+ * colors, white on dark ones. Only hex colors are judged; anything else
+ * (CSS variables, names) returns null so the caller keeps its default.
+ */
+export function readableTextColor(bg: string): string | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(bg).trim());
+  if (!m) return null;
+  const hex =
+    m[1].length === 3
+      ? m[1]
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  // contrast vs white (1.05/(L+.05)) against contrast vs black ((L+.05)/.05)
+  return lum > 0.179 ? "#1b1726" : "#ffffff";
 }
 
 /**

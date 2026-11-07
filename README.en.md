@@ -6,6 +6,8 @@
 
 A family calendar — a “who is where, when” board — for [Home Assistant](https://www.home-assistant.io/). People are columns across the top (with the avatar from their `person.*` entity), time runs down the left. The card shows at a glance which activities happen at the same time in different places — for up to 10 people.
 
+- **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button creates an event and asks “For whom?”.
+- **Clock header for wall displays** – `clock_header`: big clock, weekday/date and current weather with high/low instead of the title; optionally a round **back button** (`back_path`) and an automatic return after inactivity (`auto_back`).
 - **Day view** – people as columns, a shared time axis, now line; **overlapping events** are placed side by side.
 - **Week view** – weekdays as rows, people as columns, compact event chips.
 - **Month view** – classic month grid with colored events per person; clicking a day jumps into the day view.
@@ -46,7 +48,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 - **Compact mode** – one switch (`compact`) for smaller fonts and tighter spacing instead of adjusting three sliders.
 - **People hidden on start** – `hidden: true` per person; the column starts collapsed and a click on the header brings it back.
 
-> Status: **v0.26 – complete family day planning: 5 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
+> Status: **v0.27 – wall calendar: planner view, clock header, back button; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
 
 ## Installation (HACS)
 
@@ -70,7 +72,7 @@ type: module
 ```yaml
 type: custom:family-board-card
 title: Family board # optional, custom card title
-view: day           # day | timeline | week | month | agenda
+view: day           # day | planner | timeline | week | month | agenda
 time_grid: 30       # 15 | 30 | 60
 start_hour: 6
 end_hour: 22
@@ -111,9 +113,13 @@ persons:
 | `auto_icons` | boolean | `false` | Prepend an emoji per event based on keywords |
 | `icon_patterns` | list | – | Custom icon rules, e.g. `["Grandma => 👵"]` |
 | `auto_return` | number | `0` | Kiosk: return to the start view / today after X minutes without a touch (0 = off) |
+| `planner_days` | number | `7` | Planner: number of day columns starting today (1–14) |
+| `clock_header` | boolean | `false` | Wall display: big clock, date and current weather instead of the title |
+| `back_path` | string | – | Shows a round back button that navigates to this path, e.g. `/dashboard-tablet/home` |
+| `auto_back` | number | `0` | Kiosk: go to `back_path` after X minutes without a touch anywhere on the page (0 = off) |
 | `title` | string | – | Custom card title (default: localized “Family board”) |
-| `view` | string | `day` | Start view: `day`, `timeline`, `week`, `month` or `agenda` |
-| `views` | list | all | Which views appear in the switcher, e.g. `[day, agenda]` |
+| `view` | string | `day` | Start view: `day`, `planner`, `timeline`, `week`, `month` or `agenda` |
+| `views` | list | all | Which views appear in the switcher – in this order, e.g. `[planner, day, month]` |
 | `time_grid` | number | `30` | Time axis grid in minutes |
 | `start_hour` | number | `6` | First visible hour |
 | `end_hour` | number | `22` | Last visible hour |
@@ -155,7 +161,12 @@ The card picks up the theme's colors and fonts automatically. For fine-tuning th
 
 | Token | Default | Effect |
 |-------|---------|--------|
-| `--fb-accent` | `--primary-color` | “Today” / accent color |
+| `--fb-accent` | `--primary-color` | “Today” / accent color (planner: date circle and ＋ button) |
+| `--fb-accent-text` | `--text-primary-color` | Text on the accent color |
+| `--fb-switch-on` / `--fb-switch-on-text` | `--primary-color` | Active button in the view switcher |
+| `--fb-planner-min` / `--fb-planner-gap` | `136px` / `10px` | Planner: minimum width and gap of the day columns |
+| `--fb-planner-size` | `14px` | Planner: event title font size |
+| `--fb-planner-height` | `62vh` | Planner: height without `full_height` |
 | `--fb-now-color` | `--error-color` | Now line & progress |
 | `--fb-radius` | `7px` | Corners of the event blocks |
 | `--fb-radius-sm` | `5px` | Corners of the chips |
@@ -224,6 +235,7 @@ In the day view, clicking an empty spot in a person's column opens the create di
 - [x] Drag & drop to move events
 - [x] Available in the official HACS store
 - [x] Localized visual editor (EN/DE)
+- [x] Planner view and clock header for wall calendars (Skylight style)
 - [ ] Location / conflict detection (e.g. “nobody home”, pick-up gaps)
 
 ## License

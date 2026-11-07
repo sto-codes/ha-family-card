@@ -966,7 +966,8 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
               if (shared && group) {
                 raw.shared_person_idxs = group.personIdxs;
                 raw.shared_label =
-                  group.label || (group.ids.length === 1 ? this._todoLabel(group.ids[0]) : undefined);
+                  group.label ||
+                  (group.ids.length === 1 ? this._todoLabel(group.ids[0]) : undefined);
               }
               raws.push(raw);
             });
@@ -1077,9 +1078,14 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     if (!Array.isArray(refs) || refs.length === 0) return this._allPersonIdxs();
     const resolved: number[] = [];
     this._persons.forEach((p, idx) => {
-      const candidates = [this._personRef(p, idx), p.person, p.name ? `name:${p.name}` : "", String(idx)]
-        .filter((x): x is string => !!x);
-      if (refs.some((ref) => candidates.includes(ref)) && !resolved.includes(idx)) resolved.push(idx);
+      const candidates = [
+        this._personRef(p, idx),
+        p.person,
+        p.name ? `name:${p.name}` : "",
+        String(idx),
+      ].filter((x): x is string => !!x);
+      if (refs.some((ref) => candidates.includes(ref)) && !resolved.includes(idx))
+        resolved.push(idx);
     });
     return resolved;
   }
@@ -1126,7 +1132,11 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     return this._normalizeSharedGroups(
       this._sharedCals(),
       cfgGroups.map((g) => ({
-        ids: Array.isArray(g.calendars) ? g.calendars.filter(Boolean) : g.calendars ? [g.calendars] : [],
+        ids: Array.isArray(g.calendars)
+          ? g.calendars.filter(Boolean)
+          : g.calendars
+            ? [g.calendars]
+            : [],
         persons: g.persons,
         label: g.label,
       })),
@@ -1139,7 +1149,9 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     return val ? [val] : [];
   }
   private _sharedTodoGroups(): NormalizedSharedGroup[] {
-    const cfgGroups = Array.isArray(this._config.shared_todo_groups) ? this._config.shared_todo_groups : [];
+    const cfgGroups = Array.isArray(this._config.shared_todo_groups)
+      ? this._config.shared_todo_groups
+      : [];
     const duplicateSource = new Map<string, number[]>();
     this._config.persons.forEach((p, idx) => {
       new Set(this._todosOf(p)).forEach((id) => {
@@ -1165,14 +1177,19 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   private _sharedTodoIds(): string[] {
     return Array.from(new Set(this._sharedTodoGroups().flatMap((g) => g.ids)));
   }
-  private _sharedGroupFor(groups: NormalizedSharedGroup[], id: string): NormalizedSharedGroup | undefined {
+  private _sharedGroupFor(
+    groups: NormalizedSharedGroup[],
+    id: string,
+  ): NormalizedSharedGroup | undefined {
     return groups.find((g) => g.ids.includes(id));
   }
   private _isShared(entry: { personIdx: number; shared?: boolean }): boolean {
     return entry.shared === true || entry.personIdx === SHARED_PERSON_IDX;
   }
   private _sharedPersons(entry: { ref: RawEvent }): number[] {
-    return entry.ref.shared_person_idxs?.length ? entry.ref.shared_person_idxs : this._allPersonIdxs();
+    return entry.ref.shared_person_idxs?.length
+      ? entry.ref.shared_person_idxs
+      : this._allPersonIdxs();
   }
   private _sharedLabel(entry?: { ref: RawEvent }): string {
     const label = entry?.ref.shared_label?.trim();
@@ -2685,7 +2702,9 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
       .filter(
         ({ i }) =>
           this._config.hide_empty_persons !== true ||
-          this._events.some((e) => e.personIdx === i || (this._isShared(e) && this._sharedPersons(e).includes(i))),
+          this._events.some(
+            (e) => e.personIdx === i || (this._isShared(e) && this._sharedPersons(e).includes(i)),
+          ),
       );
     const shown = people.length > 0 ? people : this._persons.map((p, i) => ({ p, i }));
     const cols = `70px repeat(${shown.length}, minmax(110px, 1fr))`;

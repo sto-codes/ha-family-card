@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing, PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
+import { keyed } from "lit/directives/keyed.js";
 import type {
   HomeAssistant,
   LovelaceCard,
@@ -2040,6 +2041,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
                 : this._view === "month"
                   ? this._renderMonth()
                   : this._renderAgenda()}
+        ${this._renderFab()}
       </ha-card>
       ${this._dialog
         ? this._renderDialog()
@@ -2214,7 +2216,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
         ({ date }) =>
           this._config.show_weekends !== false || (date.getDay() !== 0 && date.getDay() !== 6),
       );
-    const canCreate = this._persons.some((p, i) => !this._isOff(i) && this._personCanCreate(p));
+    const canCreate = this._creators().length > 0;
     const range = formatDayRange(this.hass, start, end);
     return html`
       <div class="weekhead plnav">
@@ -2271,7 +2273,17 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
                   )}</span
                 >
               </div>
-              <div class="plbody">
+              <div
+                class="plbody ${canCreate ? "creatable" : ""}"
+                @click=${(ev: MouseEvent) => {
+                  // a tap on free space (not on a tile) adds an event on that day
+                  const t = ev.target as HTMLElement;
+                  if (!canCreate || this._suppressClick) return;
+                  if (t === ev.currentTarget || t.classList.contains("plfree")) {
+                    this._openCreateFor(date);
+                  }
+                }}
+              >
                 ${items.length === 0
                   ? html`<div class="plfree">${this._t("nothing_planned")}</div>`
                   : items.map(({ e, owners }) => this._plannerTile(e, owners))}
@@ -2280,15 +2292,6 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
           `;
         })}
       </div>
-      ${canCreate
-        ? html`<button
-            class="plfab"
-            aria-label=${this._t("add_event")}
-            @click=${() => this._openPlannerCreate(this._planOffset === 0 ? new Date() : start)}
-          >
-            <ha-icon icon="mdi:plus"></ha-icon>
-          </button>`
-        : nothing}
     `;
   }
 
@@ -2440,11 +2443,60 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     </div>`;
   }
 
-  /** Planner "+": new event on that date; asks "for whom?" when several people can write. */
-  private _openPlannerCreate(date: Date): void {
+  /** Writable calendars for a person, or for the shared calendars (SHARED_PERSON_IDX). */
+  private _writableFor(idx: number): string[] {
+    if (idx === SHARED_PERSON_IDX) {
+      return this._sharedCalendarIds().filter((c) => this.hass.states[c] && this._canCreate(c));
+    }
+    const p = this._persons[idx];
+    return p ? this._writableCals(p) : [];
+  }
+
+  /** Who can get a new event: visible persons with a writable calendar, then "shared". */
+  private _creators(): number[] {
     const who = this._persons
       .map((_, i) => i)
-      .filter((i) => !this._isOff(i) && this._personCanCreate(this._persons[i]));
+      .filter((i) => !this._isOff(i) && this._writableFor(i).length > 0);
+    if (this._writableFor(SHARED_PERSON_IDX).length > 0) who.push(SHARED_PERSON_IDX);
+    return who;
+  }
+
+  /** Date a new event starts on from the "+" button: the day the current view shows. */
+  private _createDate(): Date {
+    const today = new Date();
+    switch (this._view) {
+      case "planner":
+        return this._planOffset === 0 ? today : this._plannerWindow().start;
+      case "day":
+      case "timeline": {
+        const day = this._visibleDays.includes(this._day) ? this._day : this._visibleDays[0];
+        return this._dateForDay(day);
+      }
+      case "month": {
+        if (this._monthOffset === 0) return today;
+        const { month, year } = this._monthGrid();
+        return new Date(year, month, 1);
+      }
+      default:
+        return this._weekOffset === 0 ? today : this._weekBounds().monday;
+    }
+  }
+
+  /** Floating "+" (all views): new event; asks "for whom?" when several can be chosen. */
+  private _renderFab() {
+    if (this._creators().length === 0) return nothing;
+    return html`<button
+      class="plfab"
+      aria-label=${this._t("add_event")}
+      @click=${() => this._openCreateFor(this._createDate())}
+    >
+      <ha-icon icon="mdi:plus"></ha-icon>
+    </button>`;
+  }
+
+  /** New event on that date; asks "for whom?" when several people (or "shared") can write. */
+  private _openCreateFor(date: Date): void {
+    const who = this._creators();
     if (who.length === 0) return;
     let startMin: number | undefined;
     if (startOfDay(date).getTime() === startOfDay(new Date()).getTime()) {
@@ -2458,7 +2510,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   private _pickDialogPerson(idx: number): void {
     const d = this._dialog;
     if (!d) return;
-    const writable = this._writableCals(this._persons[idx]);
+    const writable = this._writableFor(idx);
     if (writable.length === 0) return;
     this._dialog = {
       ...d,
@@ -3563,8 +3615,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   }
 
   private _openCreateAt(idx: number, date: Date, startMin?: number, pickPersons?: number[]): void {
-    const p = this._persons[idx];
-    const writable = this._writableCals(p);
+    const writable = this._writableFor(idx);
     if (writable.length === 0) return;
     const sMin = startMin ?? Math.max(this._startMin, 9 * 60);
     // local wall-clock time on that date (stays right on DST days)
@@ -3841,6 +3892,20 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
                 <span>${this._t("for_whom")}</span>
                 <div class="whom">
                   ${d.pickPersons.map((i) => {
+                    if (i === SHARED_PERSON_IDX) {
+                      const ids = this._writableFor(i);
+                      const c = this._calMeta(ids[0]).color ?? hashColor(ids[0] ?? "shared");
+                      return html`<button
+                        class="pchip ${i === d.personIdx ? "sel" : ""}"
+                        aria-pressed=${i === d.personIdx}
+                        style="--c:${c}"
+                        @click=${() => this._pickDialogPerson(i)}
+                      >
+                        <span class="avatar initials" style="background:${c}"
+                          ><ha-icon icon="mdi:account-group"></ha-icon></span
+                        ><span>${this._t("shared_events")}</span>
+                      </button>`;
+                    }
                     const p = this._persons[i];
                     return html`<button
                       class="pchip ${i === d.personIdx ? "sel" : ""}"
@@ -3857,18 +3922,25 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
           ${d.calendarOptions && d.calendarOptions.length > 1
             ? html`<label class="fld">
                 <span>${this._t("field_calendar")}</span>
-                <select
-                  .value=${d.calendar}
-                  @change=${(e: Event) =>
-                    this._dlgField("calendar", (e.target as HTMLSelectElement).value)}
-                >
-                  ${d.calendarOptions.map(
-                    (c) =>
-                      html`<option value=${c} ?selected=${c === d.calendar}>
-                        ${this._calLabel(c)}
-                      </option>`,
-                  )}
-                </select>
+                ${
+                  // a fresh <select> per person: a reused one keeps the old value when
+                  // its options are swapped and would show an empty field
+                  keyed(
+                    d.calendarOptions.join(","),
+                    html`<select
+                      .value=${d.calendar}
+                      @change=${(e: Event) =>
+                        this._dlgField("calendar", (e.target as HTMLSelectElement).value)}
+                    >
+                      ${d.calendarOptions.map(
+                        (c) =>
+                          html`<option value=${c} ?selected=${c === d.calendar}>
+                            ${this._calLabel(c)}
+                          </option>`,
+                      )}
+                    </select>`,
+                  )
+                }
               </label>`
             : html`<div class="dlg-cal">${calName}</div>`}
 
@@ -4442,6 +4514,13 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
     }
     .plbody::-webkit-scrollbar {
       display: none;
+    }
+    .plbody.creatable {
+      cursor: copy;
+    }
+    .pchip .avatar.initials ha-icon {
+      --mdc-icon-size: 16px;
+      color: #1b1726;
     }
     .plfree {
       margin: 10px 0 0;
@@ -6282,7 +6361,7 @@ if (!customElements.get("family-board-card")) {
 });
 
 console.info(
-  "%c FAMILY-BOARD-CARD %c v0.27.0 ",
+  "%c FAMILY-BOARD-CARD %c v0.28.0 ",
   "background:#5B8CFF;color:#fff;border-radius:3px 0 0 3px",
   "background:#222;color:#fff;border-radius:0 3px 3px 0",
 );

@@ -6,7 +6,7 @@
 
 A family calendar — a “who is where, when” board — for [Home Assistant](https://www.home-assistant.io/). People are columns across the top (with the avatar from their `person.*` entity), time runs down the left. The card shows at a glance which activities happen at the same time in different places — for up to 10 people.
 
-- **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button creates an event and asks “For whom?”.
+- **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button (in every view) creates an event and asks “For whom?” – including “Shared” for writable shared calendars; tapping free space in a day adds the event right there.
 - **Clock header for wall displays** – `clock_header`: big clock, weekday/date and current weather with high/low instead of the title; optionally a round **back button** (`back_path`) and an automatic return after inactivity (`auto_back`).
 - **Day view** – people as columns, a shared time axis, now line; **overlapping events** are placed side by side.
 - **Week view** – weekdays as rows, people as columns, compact event chips.
@@ -48,7 +48,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 - **Compact mode** – one switch (`compact`) for smaller fonts and tighter spacing instead of adjusting three sliders.
 - **People hidden on start** – `hidden: true` per person; the column starts collapsed and a click on the header brings it back.
 
-> Status: **v0.27 – wall calendar: planner view, clock header, back button; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
+> Status: **v0.28 – wall calendar: planner view, clock header, back button; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
 
 ## Installation (HACS)
 

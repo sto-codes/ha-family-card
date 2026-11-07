@@ -26,8 +26,17 @@ export class PaperlessPdfViewer extends LitElement {
 
   protected firstUpdated(): void {
     this._dialog.showModal();
+    // iPad/iOS: a pull that the page list cannot scroll would reach the web view
+    // and trigger its pull-to-refresh (reloads the whole dashboard)
+    this._dialog.addEventListener("touchmove", this._guardPull, { passive: false });
     this._render();
   }
+
+  private _guardPull = (e: TouchEvent): void => {
+    const pages = this.renderRoot.querySelector<HTMLElement>(".pages");
+    const inPages = !!pages && e.composedPath().includes(pages);
+    if (!inPages || pages!.scrollHeight <= pages!.clientHeight) e.preventDefault();
+  };
 
   private async _render(): Promise<void> {
     try {
@@ -50,6 +59,7 @@ export class PaperlessPdfViewer extends LitElement {
 
   private _close(): void {
     this._closed = true;
+    this._dialog?.removeEventListener("touchmove", this._guardPull);
     this._dialog?.close();
     this.remove();
   }
@@ -105,6 +115,7 @@ export class PaperlessPdfViewer extends LitElement {
       border: none;
       background: rgba(0, 0, 0, 0.94);
       color: #fff;
+      overscroll-behavior: none;
       font-family: var(--paper-font-body1_-_font-family, sans-serif);
     }
     dialog[open] {
@@ -150,6 +161,8 @@ export class PaperlessPdfViewer extends LitElement {
       flex: 1;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
+      /* scrolling past the first/last page must not reload the dashboard */
+      overscroll-behavior: contain;
       padding: 0 12px 24px;
       display: flex;
       flex-direction: column;

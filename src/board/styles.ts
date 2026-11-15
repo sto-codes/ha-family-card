@@ -261,6 +261,35 @@ export const boardStyles = css`
   .notice .nbtn ha-icon {
     --mdc-icon-size: 18px;
   }
+  .notice.morning {
+    --c: var(--fb-morning-color, #8fd3ff);
+    flex-wrap: wrap;
+    padding: 6px 10px 6px 4px;
+    row-gap: 6px;
+  }
+  .notice.morning .mrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px 3px 3px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--c) 14%, transparent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .notice.morning .mrow.tip {
+    padding-left: 8px;
+  }
+  .notice.morning .mrow ha-icon {
+    --mdc-icon-size: 18px;
+    color: var(--c);
+  }
+  .notice.morning .mini {
+    margin: 0;
+  }
+  .notice.morning .mrow b {
+    font-weight: 750;
+  }
   .notice.leave {
     --c: var(--fb-leave-soon, #ffc46b);
   }

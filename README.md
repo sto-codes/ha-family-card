@@ -9,6 +9,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Planer (neu in v0.27)** – die Wandkalender-Ansicht im Skylight-Stil: ein Tag pro Spalte ab heute, farbige Termin-Kacheln je Person, Ganztägiges als Balken oben, Wetter pro Tag, laufender Termin mit Fortschritt. Derselbe Termin bei mehreren Personen wird **eine** Kachel mit allen Avataren. Wischen oder ‹ › blättert, ein Tipp auf den Tageskopf öffnet die Tagesansicht, der runde **＋**-Knopf (in allen Ansichten) legt einen Termin an und fragt „Für wen?“ – auch „Gemeinsam“ für beschreibbare gemeinsame Kalender; ein Tipp auf eine freie Stelle eines Tages legt den Termin direkt dort an.
 - **Uhr-Kopf für Wandanzeigen** – `clock_header`: große Uhr, Wochentag/Datum und aktuelles Wetter mit Höchst-/Tiefstwert statt des Titels; optional ein runder **Zurück-Knopf** (`back_path`) und automatische Rückkehr nach Inaktivität (`auto_back`).
 - **Wandkalender-Extras (neu in v0.29)** – **Countdowns** („⏳ Urlaub" → „noch 12× schlafen"), **Losfahren-Hinweis** mit Fahrzeit über Waze, **Hinweise mit Bestätigen-Knopf** (z. B. „Gelber Sack rausstellen · Erledigt") und **Wer ist wo** an den Personen-Chips.
+- **Morgen-Check (neu in v0.32)** – morgens (5–10 Uhr) zeigt die Karte pro Person, was heute mitmuss („Anna: Badesachen, Instrument“), abends ab 18 Uhr dasselbe für morgen; dazu ein Wettertipp wie „Regenjacke“ oder „Mütze & Handschuhe“.
 - **Zusatzkarte Paperless „Noch zu zahlen“ (neu in v0.30/v0.31)** – `custom:paperless-pay-card` zeigt offene Rechnungen aus Paperless-ngx als Kacheln mit **Bezahlt**-Knopf und ganzem PDF im Vollbild ([Details](#zusatzkarte-paperless-noch-zu-zahlen-v030-pdf-ansicht-seit-v031)).
 - **Tagesansicht** – Personen als Spalten, geteilte Zeitachse, Jetzt-Linie; **überlappende Termine** werden nebeneinander dargestellt.
 - **Wochenansicht** – Wochentage als Zeilen, Personen als Spalten, kompakte Termin-Chips.
@@ -50,7 +51,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Kompakt-Modus** – ein Schalter (`compact`) für kleinere Schriften und engere Abstände, statt drei Regler einzeln zu justieren.
 - **Personen beim Start ausgeblendet** – `hidden: true` pro Person; die Spalte startet eingeklappt und ein Klick auf den Kopf holt sie zurück.
 
-> Status: **v0.31 – Zusatzkarte Paperless „Noch zu zahlen“ mit PDF-Ansicht; Wandkalender: Planer-Ansicht, Uhr-Kopf, Countdowns, Losfahren-Hinweis, Hinweise, Anwesenheit; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
+> Status: **v0.32 – Morgen-Check (was mitnehmen, Wettertipp); Zusatzkarte Paperless „Noch zu zahlen“ mit PDF-Ansicht; Wandkalender: Planer-Ansicht, Uhr-Kopf, Countdowns, Losfahren-Hinweis, Hinweise, Anwesenheit; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
 
 ## Installation (HACS)
 
@@ -124,6 +125,8 @@ persons:
 | `countdowns`    | bool/Map | –      | Termine mit ⏳ im Titel als Countdown-Chips; Map: `marker`, `days`, `max` |
 | `travel`        | Map     | –       | „Losfahren"-Hinweis über Waze: `origin`, `region`, `buffer`, `lead`, `places`, `geocode` |
 | `notices`       | Liste   | –       | Hinweise aus Entitäten mit optionalem Bestätigen-Knopf (siehe unten) |
+| `morning_check` | bool/Map | –      | Morgen-Check: was jeder heute mitnehmen muss, abends für morgen, plus Wettertipp (siehe unten) |
+| `show_back_button` | boolean | `true` | `false` blendet den runden Zurück-Knopf aus, z. B. wenn die Karte auf einer HA-Unterseite mit Zurück-Pfeil liegt; `auto_back` wirkt weiter |
 | `title`          | string  | –       | Eigener Kartentitel (Default: lokalisiert „Familienplan") |
 | `view`          | string  | `day`   | Startansicht: `day`, `planner`, `timeline`, `week`, `month` oder `agenda` |
 | `views`         | Liste   | alle    | Welche Ansichten im Umschalter erscheinen – in dieser Reihenfolge, z. B. `[planner, day, month]` |
@@ -313,6 +316,26 @@ rest_command:
       Authorization: !secret paperless_auth   # "Token …"
     content_type: "application/json"
     payload: '{"tags": {{ tags | map("int") | list | to_json }}}'
+```
+
+## Morgen-Check (v0.32)
+
+Von `from` bis `until` Uhr steht oben „Heute mitnehmen“, ab `evening` Uhr „Für morgen packen“. Pro Person erscheinen die Dinge,
+die zu den Terminen des Tages passen: Schwimmen → Badesachen, Turnen/Training → Sportzeug, Instrument/Musikschule → Instrument,
+Reiten, Tanzen, Yoga, Ausflug, Bücherei. Dazu ein Wettertipp aus der Vorhersage von `weather_entity`: Regenjacke (Regen oder
+≥ 50 % Regenwahrscheinlichkeit), Schneesachen, Mütze & Handschuhe (Tiefstwert ≤ 3 °C), Sonnencreme & Kappe (≥ 25 °C).
+
+```yaml
+morning_check:                # oder einfach: morning_check: true
+  from: 5
+  until: 10
+  evening: 18                 # 0 = abends nichts zeigen
+  persons: [Anna, Ben]        # optional: nur diese Personen
+  items:                      # eigene Regeln zuerst: "Suchtext => Mitnehmen" (Groß/klein egal, Regex erlaubt)
+    - "Bücherei => Leseausweis"
+    - "Zahnarzt => Versichertenkarte"
+  default_items: true         # eingebaute Regeln nutzen
+  weather: true
 ```
 
 ## Termine anlegen / bearbeiten / löschen

@@ -4,6 +4,11 @@ import { formatCountdown, formatTime, formatWeekRange } from "../../localize";
 import { daysUntil, fillTemplate, noticeActive, stripMarker } from "../../extras";
 import type { LeaveInfo } from "../../extras";
 import { WEATHER_ICON, personColor, toLocalDate } from "../utils";
+import { langOf } from "../../localize";
+import { morningMode, packList, packRules, weatherTips } from "../../morning";
+import type { WeatherTip } from "../../morning";
+import { startOfDay } from "../utils";
+import { miniAvatar } from "./planner";
 import type { FamilyBoardCard } from "../../ha-family-board-card";
 
 /** Wall display header: big clock, weekday + date, current weather, view toggle. */
@@ -90,9 +95,10 @@ export function renderExtras(card: FamilyBoardCard) {
     )
     .slice(0, 2);
   const cds = card._config.clock_header ? nothing : renderCountdowns(card);
-  if (!notices.length && !leaving.length && cds === nothing) return nothing;
+  const morning = renderMorning(card);
+  if (!notices.length && !leaving.length && cds === nothing && morning === nothing) return nothing;
   return html`<div class="extras">
-    ${cds}
+    ${cds} ${morning}
     ${leaving.map(
       ({ r, l }) =>
         html`<div class="notice leave ${l.level}">
@@ -219,8 +225,69 @@ export function viewSwitch(card: FamilyBoardCard) {
 
 /** Round back button, shown when `back_path` is set (wall tablet: back to the home dashboard). */
 export function backButton(card: FamilyBoardCard) {
-  if (!card._config.back_path) return nothing;
+  if (!card._config.back_path || card._config.show_back_button === false) return nothing;
   return html`<button class="back" aria-label=${card._t("back")} @click=${card._navigateBack}>
     <ha-icon icon="mdi:chevron-left"></ha-icon>
   </button>`;
+}
+
+const TIP_ICON: Record<WeatherTip, string> = {
+  rain: "mdi:umbrella-outline",
+  snow: "mdi:snowflake",
+  cold: "mdi:thermometer-low",
+  sun: "mdi:white-balance-sunny",
+};
+
+/**
+ * Morning check: per person what to take along today (in the morning) or to pack for
+ * tomorrow (in the evening), derived from event titles, plus a clothing tip from the forecast.
+ */
+export function renderMorning(card: FamilyBoardCard) {
+  const cfg = card._morningCfg;
+  if (!cfg) return nothing;
+  const mode = morningMode(new Date(), cfg);
+  if (mode === null) return nothing;
+  const day = startOfDay(new Date());
+  day.setDate(day.getDate() + mode);
+  const next = new Date(day);
+  next.setDate(next.getDate() + 1);
+  const rules = packRules(langOf(card.hass), cfg.items, cfg.default_items);
+  const only = cfg.persons.map((n) => n.toLowerCase());
+  const rows = card._persons
+    .map((p, idx) => {
+      if (card._isOff(idx)) return null;
+      if (only.length && !only.includes(card._personName(p, idx).toLowerCase())) return null;
+      const titles = card._raw
+        .filter(
+          (r) =>
+            r.kind !== "todo" &&
+            (r.personIdx === idx || r.shared_person_idxs?.includes(idx)) &&
+            r.start < next &&
+            r.end > day,
+        )
+        .map((r) => r.summary);
+      const items = packList(titles, rules);
+      return items.length ? { idx, items } : null;
+    })
+    .filter((x): x is { idx: number; items: string[] } => !!x);
+  const tips = cfg.weather ? weatherTips(card._forecast[toLocalDate(day)]) : [];
+  if (!rows.length && !tips.length) return nothing;
+  return html`<div class="notice morning">
+    <ha-icon icon="mdi:bag-personal-outline"></ha-icon>
+    <span class="ntxt"><b>${card._t(mode === 0 ? "morning_today" : "morning_tomorrow")}</b></span>
+    ${rows.map(
+      (r) =>
+        html`<span class="mrow"
+          >${miniAvatar(card, r.idx)}<span
+            ><b>${card._personName(card._persons[r.idx], r.idx)}:</b> ${r.items.join(", ")}</span
+          ></span
+        >`,
+    )}
+    ${tips.map(
+      (tip) =>
+        html`<span class="mrow tip"
+          ><ha-icon icon=${TIP_ICON[tip]}></ha-icon>${card._t("tip_" + tip)}</span
+        >`,
+    )}
+  </div>`;
 }

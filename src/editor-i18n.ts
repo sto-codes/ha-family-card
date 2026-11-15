@@ -59,6 +59,8 @@ const EN: Dict = {
   l_planner_days: "Planner: number of days",
   l_clock_header: "Clock header for wall displays",
   l_countdowns: "Countdowns (events with ⏳)",
+  l_morning_check: "Morning check (what to take along)",
+  l_show_back_button: "Show round back button",
   l_show_presence: "Show who is where",
   l_home_zone: "Home zone",
   l_back_path: "Back button to (dashboard path)",
@@ -94,6 +96,10 @@ const EN: Dict = {
   h_planner_days: "Day columns starting today; swipe or ‹ › pages to the next days",
   h_clock_header: "Big clock, date and current weather instead of the title",
   h_countdowns: 'Put ⏳ in an event title (e.g. "⏳ Holiday") and it is counted down in the header',
+  h_morning_check:
+    "5–10 am: what everyone needs today (swimwear, sports kit …) plus a weather tip; from 6 pm for tomorrow",
+  h_show_back_button:
+    "Off when the dashboard header already has a back arrow (subview); going back after idle still works",
   h_show_presence: "Person chips show home / away / zone with a colored ring",
   h_home_zone: "Zone that counts as home (default zone.home); also the start for travel times",
   h_back_path: "e.g. /dashboard-tablet/home – shows a round back button",
@@ -204,6 +210,8 @@ const DE: Dict = {
   l_planner_days: "Planer: Anzahl Tage",
   l_clock_header: "Uhr-Kopf für Wandanzeigen",
   l_countdowns: "Countdowns (Termine mit ⏳)",
+  l_morning_check: "Morgen-Check (was mitnehmen)",
+  l_show_back_button: "Runden Zurück-Knopf zeigen",
   l_show_presence: "Zeigen, wer wo ist",
   l_home_zone: "Zuhause-Zone",
   l_back_path: "Zurück-Knopf zu (Dashboard-Pfad)",
@@ -238,6 +246,10 @@ const DE: Dict = {
   h_planner_days: "Tages-Spalten ab heute; Wischen oder ‹ › blättert weiter",
   h_clock_header: "Große Uhr, Datum und aktuelles Wetter statt des Titels",
   h_countdowns: "⏳ in den Termintitel schreiben (z. B. „⏳ Urlaub“) – wird oben heruntergezählt",
+  h_morning_check:
+    "5–10 Uhr: was jeder heute braucht (Badesachen, Sportzeug …) plus Wettertipp; ab 18 Uhr für morgen",
+  h_show_back_button:
+    "Aus, wenn die Kopfzeile schon einen Zurück-Pfeil hat (Unterseite); Zurück nach Inaktivität bleibt",
   h_show_presence: "Personen-Chips zeigen zuhause / unterwegs / Zone mit farbigem Ring",
   h_home_zone: "Zone, die als zuhause gilt (Standard zone.home); auch Start für Fahrzeiten",
   h_back_path: "z. B. /dashboard-tablet/home – zeigt einen runden Zurück-Knopf",

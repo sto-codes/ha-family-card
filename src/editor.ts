@@ -177,11 +177,13 @@ export class FamilyBoardCardEditor extends LitElement implements LovelaceCardEdi
     const extras: unknown[] = [
       { name: "clock_header", selector: { boolean: {} } },
       { name: "countdowns", selector: { boolean: {} } },
+      { name: "morning_check", selector: { boolean: {} } },
       { name: "show_presence", selector: { boolean: {} } },
       { name: "home_zone", selector: { entity: { filter: { domain: "zone" } } } },
       { name: "back_path", selector: { text: {} } },
       ...(cfg.back_path
         ? [
+            { name: "show_back_button", selector: { boolean: {} } },
             {
               name: "auto_back",
               selector: {

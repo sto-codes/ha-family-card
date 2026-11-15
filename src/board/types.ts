@@ -82,12 +82,24 @@ export interface FamilyBoardConfig extends LovelaceCardConfig {
   planner_days?: number; // planner view: number of day columns starting today. default 7
   clock_header?: boolean; // wall display: big clock, date and current weather as the card header
   back_path?: string; // shows a back button that navigates to this dashboard path
+  show_back_button?: boolean; // false: no round back button (e.g. HA subview header has one); auto_back still works
   auto_back?: number; // kiosk: minutes without touch before navigating to back_path. 0=off
   home_zone?: string; // zone that counts as "home" for presence and travel. default zone.home
   show_presence?: boolean; // person chips show where everyone is. default true
   countdowns?: boolean | CountdownConfig; // "⏳ Urlaub" events become countdown chips
   travel?: TravelConfig; // "time to leave" for today's events with a location (Waze)
   notices?: NoticeConfig[]; // banners driven by entities, e.g. "Put the bin out" + done button
+  morning_check?: boolean | MorningCheckConfig; // what to take along today / pack tonight, plus a weather tip
+}
+
+export interface MorningCheckConfig {
+  from?: number; // hour the "take along today" hint appears. default 5
+  until?: number; // hour it disappears. default 10
+  evening?: number; // hour the "pack for tomorrow" hint appears, 0 = off. default 18
+  persons?: string[]; // only these persons (names); default all
+  items?: string[]; // extra rules "Bücherei => Büchereibücher", checked before the built-in ones
+  default_items?: boolean; // use the built-in rules (swim, sport, instrument …). default true
+  weather?: boolean; // add a clothing tip from the forecast. default true
 }
 
 export interface CountdownConfig {

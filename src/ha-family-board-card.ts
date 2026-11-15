@@ -81,6 +81,8 @@ import { property, state } from "lit/decorators.js";
 import type { PropertyValues } from "lit";
 import { LitElement } from "lit";
 import { boardStyles } from "./board/styles";
+import type { DayWeather, MorningWindow } from "./morning";
+import type { MorningCheckConfig } from "./board/types";
 
 export { autoDetectPersons } from "./board/utils";
 export type {
@@ -129,7 +131,7 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   _fetchedKey = "";
   _timer?: number;
   _tick?: number;
-  @state() _forecast: Record<string, { temp: number; low?: number; condition: string }> = {};
+  @state() _forecast: Record<string, DayWeather> = {};
   _weatherKey = "";
   @state() _countdowns: CountdownItem[] = [];
   _countdownKey = "";
@@ -579,13 +581,16 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
         return_response: true,
       });
       const list: any[] = res?.response?.[ent]?.forecast ?? [];
-      const map: Record<string, { temp: number; low?: number; condition: string }> = {};
+      const map: Record<string, DayWeather> = {};
       for (const f of list) {
         if (!f?.datetime) continue;
         map[toLocalDate(new Date(f.datetime))] = {
           temp: Math.round(f.temperature),
           low: Number.isFinite(Number(f.templow)) ? Math.round(Number(f.templow)) : undefined,
           condition: f.condition,
+          rain: Number.isFinite(Number(f.precipitation_probability))
+            ? Number(f.precipitation_probability)
+            : undefined,
         };
       }
       this._forecast = map;
@@ -1822,6 +1827,26 @@ export class FamilyBoardCard extends LitElement implements LovelaceCard {
   }
 
   /* ---- countdowns ("⏳ Urlaub · noch 12× schlafen") -------------- */
+  /** Normalized morning_check config, or undefined when off. */
+  get _morningCfg(): (Required<MorningCheckConfig> & MorningWindow) | undefined {
+    const c = this._config.morning_check;
+    if (!c) return undefined;
+    const o: MorningCheckConfig = typeof c === "object" ? c : {};
+    const hour = (v: unknown, d: number) => {
+      const n = Number(v ?? d);
+      return Number.isFinite(n) ? Math.min(24, Math.max(0, n)) : d;
+    };
+    return {
+      from: hour(o.from, 5),
+      until: hour(o.until, 10),
+      evening: hour(o.evening, 18),
+      persons: o.persons ?? [],
+      items: o.items ?? [],
+      default_items: o.default_items !== false,
+      weather: o.weather !== false,
+    };
+  }
+
   get _countdownCfg(): Required<CountdownConfig> | undefined {
     const c = this._config.countdowns;
     if (!c) return undefined;
@@ -2483,7 +2508,7 @@ if (!customElements.get("family-board-card")) {
 });
 
 console.info(
-  "%c FAMILY-BOARD-CARD %c v0.31.1 ",
+  "%c FAMILY-BOARD-CARD %c v0.32.0 ",
   "background:#5B8CFF;color:#fff;border-radius:3px 0 0 3px",
   "background:#222;color:#fff;border-radius:0 3px 3px 0",
 );

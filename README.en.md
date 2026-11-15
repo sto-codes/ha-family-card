@@ -8,6 +8,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 
 - **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button (in every view) creates an event and asks “For whom?” – including “Shared” for writable shared calendars; tapping free space in a day adds the event right there.
 - **Wall calendar extras (new in v0.29)** – **countdowns** ("⏳ Holiday" → "12 sleeps to go"), a **time-to-leave hint** with Waze driving times, **notices with a confirm button** (e.g. "Put out the bin · Done") and **who is where** on the person chips.
+- **Morning check (new in v0.32)** – in the morning (5–10 am) the card shows per person what to take along today (“Anna: Swimwear, Instrument”), from 6 pm the same for tomorrow, plus a weather tip such as “Rain jacket” or “Hat & gloves”.
 - **Paperless “to pay” extra card (new in v0.30/v0.31)** – `custom:paperless-pay-card` shows unpaid bills from Paperless-ngx as tiles with a **Paid** button and the full PDF in full screen ([details](#extra-card-paperless-to-pay-v030-pdf-view-since-v031)).
 - **Clock header for wall displays** – `clock_header`: big clock, weekday/date and current weather with high/low instead of the title; optionally a round **back button** (`back_path`) and an automatic return after inactivity (`auto_back`).
 - **Day view** – people as columns, a shared time axis, now line; **overlapping events** are placed side by side.
@@ -50,7 +51,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 - **Compact mode** – one switch (`compact`) for smaller fonts and tighter spacing instead of adjusting three sliders.
 - **People hidden on start** – `hidden: true` per person; the column starts collapsed and a click on the header brings it back.
 
-> Status: **v0.31 – Paperless “to pay” extra card with PDF view; wall calendar: planner view, clock header, countdowns, time to leave, notices, presence; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
+> Status: **v0.32 – morning check (what to take along, weather tip); Paperless “to pay” extra card with PDF view; wall calendar: planner view, clock header, countdowns, time to leave, notices, presence; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
 
 ## Installation (HACS)
 
@@ -124,6 +125,8 @@ persons:
 | `countdowns` | bool/map | – | Events with ⏳ in the title become countdown chips; map: `marker`, `days`, `max` |
 | `travel` | map | – | "Time to leave" via Waze: `origin`, `region`, `buffer`, `lead`, `places`, `geocode` |
 | `notices` | list | – | Entity-driven notices with an optional confirm button (see below) |
+| `morning_check` | bool/map | – | Morning check: what everyone needs today, in the evening for tomorrow, plus a weather tip (see below) |
+| `show_back_button` | boolean | `true` | `false` hides the round back button, e.g. when the card sits on an HA subview with a back arrow; `auto_back` keeps working |
 | `title` | string | – | Custom card title (default: localized “Family board”) |
 | `view` | string | `day` | Start view: `day`, `planner`, `timeline`, `week`, `month` or `agenda` |
 | `views` | list | all | Which views appear in the switcher – in this order, e.g. `[planner, day, month]` |
@@ -313,6 +316,25 @@ rest_command:
       Authorization: !secret paperless_auth   # "Token …"
     content_type: "application/json"
     payload: '{"tags": {{ tags | map("int") | list | to_json }}}'
+```
+
+## Morning check (v0.32)
+
+From `from` to `until` o'clock the header shows “Take along today”, from `evening` “Pack for tomorrow”. For each person it lists what
+fits the day's events: swimming → swimwear, sports/training → sports kit, instrument/music school → instrument, riding, dance, yoga,
+field trips, library. Plus a weather tip from the `weather_entity` forecast: rain jacket (rain or ≥ 50 % chance), snow gear,
+hat & gloves (low ≤ 3 °C), sun cream & cap (≥ 25 °C). German calendars get German rules, other languages English ones.
+
+```yaml
+morning_check:                # or simply: morning_check: true
+  from: 5
+  until: 10
+  evening: 18                 # 0 = nothing in the evening
+  persons: [Anna, Ben]        # optional: only these persons
+  items:                      # own rules first: "pattern => item" (case-insensitive, regex allowed)
+    - "library => Library card"
+  default_items: true         # use the built-in rules
+  weather: true
 ```
 
 ## Creating / editing / deleting events

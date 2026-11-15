@@ -9,6 +9,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Planer (neu in v0.27)** – die Wandkalender-Ansicht im Skylight-Stil: ein Tag pro Spalte ab heute, farbige Termin-Kacheln je Person, Ganztägiges als Balken oben, Wetter pro Tag, laufender Termin mit Fortschritt. Derselbe Termin bei mehreren Personen wird **eine** Kachel mit allen Avataren. Wischen oder ‹ › blättert, ein Tipp auf den Tageskopf öffnet die Tagesansicht, der runde **＋**-Knopf (in allen Ansichten) legt einen Termin an und fragt „Für wen?“ – auch „Gemeinsam“ für beschreibbare gemeinsame Kalender; ein Tipp auf eine freie Stelle eines Tages legt den Termin direkt dort an.
 - **Uhr-Kopf für Wandanzeigen** – `clock_header`: große Uhr, Wochentag/Datum und aktuelles Wetter mit Höchst-/Tiefstwert statt des Titels; optional ein runder **Zurück-Knopf** (`back_path`) und automatische Rückkehr nach Inaktivität (`auto_back`).
 - **Wandkalender-Extras (neu in v0.29)** – **Countdowns** („⏳ Urlaub" → „noch 12× schlafen"), **Losfahren-Hinweis** mit Fahrzeit über Waze, **Hinweise mit Bestätigen-Knopf** (z. B. „Gelber Sack rausstellen · Erledigt") und **Wer ist wo** an den Personen-Chips.
+- **Zusatzkarte Paperless „Noch zu zahlen“ (neu in v0.30/v0.31)** – `custom:paperless-pay-card` zeigt offene Rechnungen aus Paperless-ngx als Kacheln mit **Bezahlt**-Knopf und ganzem PDF im Vollbild ([Details](#zusatzkarte-paperless-noch-zu-zahlen-v030-pdf-ansicht-seit-v031)).
 - **Tagesansicht** – Personen als Spalten, geteilte Zeitachse, Jetzt-Linie; **überlappende Termine** werden nebeneinander dargestellt.
 - **Wochenansicht** – Wochentage als Zeilen, Personen als Spalten, kompakte Termin-Chips.
 - **Monatsansicht** – klassisches Monats-Grid mit farbigen Terminen pro Person; Klick auf einen Tag springt in die Tagesansicht.
@@ -49,7 +50,7 @@ Ein Familienkalender bzw. „Wer ist wann wo"-Board für [Home Assistant](https:
 - **Kompakt-Modus** – ein Schalter (`compact`) für kleinere Schriften und engere Abstände, statt drei Regler einzeln zu justieren.
 - **Personen beim Start ausgeblendet** – `hidden: true` pro Person; die Spalte startet eingeklappt und ein Klick auf den Kopf holt sie zurück.
 
-> Status: **v0.29 – Wandkalender: Planer-Ansicht, Uhr-Kopf, Countdowns, Losfahren-Hinweis, Hinweise, Anwesenheit; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
+> Status: **v0.31 – Zusatzkarte Paperless „Noch zu zahlen“ mit PDF-Ansicht; Wandkalender: Planer-Ansicht, Uhr-Kopf, Countdowns, Losfahren-Hinweis, Hinweise, Anwesenheit; vollständige Familien-Tagesplanung: 6 Ansichten, Schreibzugriff, Auto-Layout (Trim/Fit/Full-Height), Hintergrund-Bänder, Badges, Kiosk-Modus, mobil optimiert, Karte und Editor vollständig lokalisiert.**
 
 ## Installation (HACS)
 
@@ -228,6 +229,20 @@ npm run format       # Prettier
 Schneller Loop gegen die laufende HA-Instanz: `dist/ha-family-board-card.js` nach `config/www/` kopieren und die Seite hart neu laden.
 
 Die fehleranfällige Event-Logik (Splitting über Mitternacht, Ganztags-Exklusivität, Zeitzonen, Überlappungs-Layout) liegt isoliert in [`src/events.ts`](src/events.ts) und ist über [`src/events.test.ts`](src/events.test.ts) abgedeckt.
+
+Aufbau des Quellcodes:
+
+| Pfad | Inhalt |
+|------|--------|
+| [`src/ha-family-board-card.ts`](src/ha-family-board-card.ts) | Karten-Element: Zustand, Daten laden, Hilfsmethoden, Drag & Drop, Speichern |
+| [`src/board/views/`](src/board/views) | Render-Funktionen je Ansicht (`day`, `planner`, `timeline`, `week`, `month`, `agenda`), Kopfzeile/Extras (`header`) und Dialoge (`dialogs`) |
+| [`src/board/types.ts`](src/board/types.ts) | Konfigurations- und Zustandstypen |
+| [`src/board/utils.ts`](src/board/utils.ts) | Konstanten, Farben, Datums-Helfer, Auto-Erkennung der Personen |
+| [`src/board/styles.ts`](src/board/styles.ts) | CSS der Karte |
+| [`src/editor.ts`](src/editor.ts) | Visueller Editor |
+| `src/paperless-*.ts` | Zusatzkarte Paperless |
+
+Die Render-Funktionen bekommen die Karte als Parameter (`renderDay(card)`) und lesen deren Zustand direkt.
 
 ## Wandkalender-Extras (v0.29)
 

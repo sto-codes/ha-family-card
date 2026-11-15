@@ -8,6 +8,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 
 - **Planner (new in v0.27)** – the wall-calendar view in Skylight style: one column per day starting today, colored event tiles per person, all-day items as bars on top, weather per day, the running event with progress. The same event in several people's calendars becomes **one** tile with all their avatars. Swipe or ‹ › to page, tap a day header to open the day view, and the round **＋** button (in every view) creates an event and asks “For whom?” – including “Shared” for writable shared calendars; tapping free space in a day adds the event right there.
 - **Wall calendar extras (new in v0.29)** – **countdowns** ("⏳ Holiday" → "12 sleeps to go"), a **time-to-leave hint** with Waze driving times, **notices with a confirm button** (e.g. "Put out the bin · Done") and **who is where** on the person chips.
+- **Paperless “to pay” extra card (new in v0.30/v0.31)** – `custom:paperless-pay-card` shows unpaid bills from Paperless-ngx as tiles with a **Paid** button and the full PDF in full screen ([details](#extra-card-paperless-to-pay-v030-pdf-view-since-v031)).
 - **Clock header for wall displays** – `clock_header`: big clock, weekday/date and current weather with high/low instead of the title; optionally a round **back button** (`back_path`) and an automatic return after inactivity (`auto_back`).
 - **Day view** – people as columns, a shared time axis, now line; **overlapping events** are placed side by side.
 - **Week view** – weekdays as rows, people as columns, compact event chips.
@@ -49,7 +50,7 @@ A family calendar — a “who is where, when” board — for [Home Assistant](
 - **Compact mode** – one switch (`compact`) for smaller fonts and tighter spacing instead of adjusting three sliders.
 - **People hidden on start** – `hidden: true` per person; the column starts collapsed and a click on the header brings it back.
 
-> Status: **v0.29 – wall calendar: planner view, clock header, countdowns, time to leave, notices, presence; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
+> Status: **v0.31 – Paperless “to pay” extra card with PDF view; wall calendar: planner view, clock header, countdowns, time to leave, notices, presence; complete family day planning: 6 views, write access, auto layout (trim/fit/full height), background bands, badges, kiosk mode, mobile optimized, fully localized card *and* editor.**
 
 ## Installation (HACS)
 
@@ -229,6 +230,20 @@ Fast loop against a running HA instance: copy `dist/ha-family-board-card.js` to 
 
 The error-prone event logic (splitting across midnight, all-day exclusivity, time zones, overlap layout) lives isolated in [`src/events.ts`](src/events.ts) and is covered by [`src/events.test.ts`](src/events.test.ts).
 
+Source layout:
+
+| Path | Contents |
+|------|----------|
+| [`src/ha-family-board-card.ts`](src/ha-family-board-card.ts) | Card element: state, data loading, helper methods, drag & drop, saving |
+| [`src/board/views/`](src/board/views) | Render functions per view (`day`, `planner`, `timeline`, `week`, `month`, `agenda`), header/extras (`header`) and dialogs (`dialogs`) |
+| [`src/board/types.ts`](src/board/types.ts) | Config and state types |
+| [`src/board/utils.ts`](src/board/utils.ts) | Constants, colors, date helpers, person auto-detection |
+| [`src/board/styles.ts`](src/board/styles.ts) | Card CSS |
+| [`src/editor.ts`](src/editor.ts) | Visual editor |
+| `src/paperless-*.ts` | Paperless extra card |
+
+Render functions take the card as a parameter (`renderDay(card)`) and read its state directly.
+
 ## Wall calendar extras (v0.29)
 
 ```yaml
@@ -261,6 +276,44 @@ notices:                      # notices with a confirm button, e.g. the bin
 - **Countdowns** show in the clock header (otherwise above the board): "Holiday · 12 sleeps to go", 🎉 from tomorrow on. A tap jumps to that day.
 - **Time to leave:** for today's events with a location the card asks Waze for the driving time from `origin`. The tile shows "leave 14:33", 15 minutes before a banner "Leave in 12 min" appears, then a red "Leave now!". Addresses are turned into coordinates via OpenStreetMap (Nominatim) and cached in the browser; set `geocode: false` and use `places` to avoid that. Online meetings (Zoom, Teams, links) are skipped.
 - **Notices** are visible while the entity is not in `idle_states` (default off/unknown/unavailable/none …); `{state}` and `{name}` are filled into the title. The button calls `action` and hides the notice right away.
+
+## Extra card: Paperless “to pay” (v0.30, PDF view since v0.31)
+
+The package ships a second card: `custom:paperless-pay-card`. It shows every document from
+[Paperless-ngx](https://docs.paperless-ngx.com/) with a given tag (e.g. “ToPay”) as tiles with a thumbnail,
+correspondent and date. A large **Paid** button removes the tag; further tags can be toggled via chips.
+Tapping the thumbnail opens the whole PDF in full screen (all pages stacked, magnifier to zoom). For that the card
+loads [pdf.js](https://mozilla.github.io/pdf.js/) from jsDelivr on first use; without internet it falls back to the
+first-page thumbnail.
+
+```yaml
+type: custom:paperless-pay-card
+url: http://192.168.10.164:8000      # Paperless, as the tablet reaches it
+token: <read-only token>              # reads list, thumbnails, tag and correspondent names
+tag: 15                               # documents with this tag are shown
+tags: [15, 18, 14, 13, 12]            # chips to toggle (default: only `tag`)
+paid_tag: 15                          # removed by the Paid button (default: `tag`)
+service: rest_command.paperless_tags_setzen   # writes the tags (default)
+entity: sensor.topay                  # optional: reload when this counter changes
+refresh: 300                          # seconds
+```
+
+Requirements:
+
+- Add the Home Assistant address to `PAPERLESS_CORS_ALLOWED_HOSTS` in Paperless, otherwise the browser blocks the requests.
+- The card's token is stored in the dashboard config: use a user with read permissions only.
+- Writes go through a Home Assistant service, so the write token stays on the server:
+
+```yaml
+rest_command:
+  paperless_tags_setzen:
+    url: "http://192.168.10.164:8000/api/documents/{{ id | int }}/"
+    method: PATCH
+    headers:
+      Authorization: !secret paperless_auth   # "Token …"
+    content_type: "application/json"
+    payload: '{"tags": {{ tags | map("int") | list | to_json }}}'
+```
 
 ## Creating / editing / deleting events
 

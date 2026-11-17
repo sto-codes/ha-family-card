@@ -76,6 +76,9 @@ export class PaperlessPdfViewer extends LitElement {
     return html`
       <dialog @cancel=${(e: Event) => (e.preventDefault(), this._close())}>
         <div class="bar">
+          <button @click=${() => this._close()} aria-label="Zurück">
+            <ha-icon icon="mdi:chevron-left"></ha-icon>
+          </button>
           <div class="title">${this.heading}<span>${this._count()}</span></div>
           <button
             ?disabled=${this._zoom === 100}
@@ -86,9 +89,6 @@ export class PaperlessPdfViewer extends LitElement {
           </button>
           <button @click=${() => (this._zoom = nextZoom(this._zoom, 1))} aria-label="Vergrößern">
             <ha-icon icon="mdi:magnify-plus-outline"></ha-icon>
-          </button>
-          <button @click=${() => this._close()} aria-label="Schließen">
-            <ha-icon icon="mdi:close"></ha-icon>
           </button>
         </div>
         <div class="pages" style="--z:${this._zoom / 100}">
@@ -129,7 +129,7 @@ export class PaperlessPdfViewer extends LitElement {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 12px 10px 18px;
+      padding: 10px 12px;
     }
     .title {
       flex: 1;
